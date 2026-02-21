@@ -1,0 +1,2 @@
+# Drop manually downloaded PDFs here, then run:
+# citation-tracker ingest <path-to-pdf> --doi <doi>
