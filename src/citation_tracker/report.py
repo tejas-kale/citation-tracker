@@ -79,3 +79,51 @@ def build_full_report(
         return "# Citation Tracker Report\n\nNo data to report.\n"
     parts = [build_report(tp, analyses, failed) for tp, analyses, failed in sections]
     return "\n\n---\n\n".join(parts)
+
+
+def render_full_report_html(markdown_content: str) -> str:
+    """Render the Markdown report as a full HTML page with basic styling."""
+    try:
+        import markdown
+    except ImportError:
+        return f"<html><body><pre>{markdown_content}</pre></body></html>"
+
+    html_body = markdown.markdown(markdown_content, extensions=["extra", "toc"])
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Citation Tracker Report</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+            background-color: #f9f9f9;
+        }}
+        .container {{
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }}
+        h1, h2, h3 {{ color: #1a1a1a; }}
+        h1 {{ border-bottom: 2px solid #eee; padding-bottom: 10px; }}
+        h2 {{ margin-top: 40px; border-bottom: 1px solid #eee; }}
+        code {{ background: #f4f4f4; padding: 2px 4px; border-radius: 4px; }}
+        hr {{ border: 0; border-top: 2px solid #eee; margin: 40px 0; }}
+        .metadata {{ color: #666; font-style: italic; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        {html_body}
+    </div>
+</body>
+</html>
+"""

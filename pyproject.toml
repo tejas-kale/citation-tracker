@@ -6,13 +6,14 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx",
     "pymupdf4llm",
+    "pymupdf-layout",
     "openai",
-    "resend",
     "click",
     "pyyaml",
     "python-dotenv",
     "tenacity",
     "rich",
+    "markdown",
 ]
 
 [project.scripts]

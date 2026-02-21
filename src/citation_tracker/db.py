@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,11 @@ from typing import Any, Generator
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _generate_id() -> str:
+    """Generate a short 8-character UUID."""
+    return uuid.uuid4().hex[:8]
 
 
 def init_db(db_path: Path) -> None:
@@ -24,7 +30,7 @@ def init_db(db_path: Path) -> None:
             PRAGMA foreign_keys=ON;
 
             CREATE TABLE IF NOT EXISTS tracked_papers (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          TEXT PRIMARY KEY,
                 doi         TEXT,
                 title       TEXT,
                 authors     TEXT,
@@ -38,8 +44,8 @@ def init_db(db_path: Path) -> None:
             );
 
             CREATE TABLE IF NOT EXISTS citing_papers (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                tracked_paper_id    INTEGER NOT NULL REFERENCES tracked_papers(id),
+                id                  TEXT PRIMARY KEY,
+                tracked_paper_id    TEXT NOT NULL REFERENCES tracked_papers(id),
                 doi                 TEXT,
                 title               TEXT,
                 authors             TEXT,
@@ -55,9 +61,9 @@ def init_db(db_path: Path) -> None:
             );
 
             CREATE TABLE IF NOT EXISTS analyses (
-                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-                citing_paper_id         INTEGER NOT NULL REFERENCES citing_papers(id),
-                tracked_paper_id        INTEGER NOT NULL REFERENCES tracked_papers(id),
+                id                      TEXT PRIMARY KEY,
+                citing_paper_id         TEXT NOT NULL REFERENCES citing_papers(id),
+                tracked_paper_id        TEXT NOT NULL REFERENCES tracked_papers(id),
                 backend_used            TEXT,
                 summary                 TEXT,
                 relationship_type       TEXT,
@@ -70,9 +76,9 @@ def init_db(db_path: Path) -> None:
             );
 
             CREATE TABLE IF NOT EXISTS runs (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                id                  TEXT PRIMARY KEY,
                 triggered_by        TEXT NOT NULL,
-                tracked_paper_id    INTEGER REFERENCES tracked_papers(id),
+                tracked_paper_id    TEXT REFERENCES tracked_papers(id),
                 started_at          TEXT NOT NULL,
                 finished_at         TEXT,
                 new_papers_found    INTEGER,
@@ -101,18 +107,20 @@ def get_conn(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
 # ── tracked_papers ─────────────────────────────────────────────────────────
 
 
-def insert_tracked_paper(conn: sqlite3.Connection, paper: dict[str, Any]) -> int:
-    cur = conn.execute(
+def insert_tracked_paper(conn: sqlite3.Connection, paper: dict[str, Any]) -> str:
+    paper_id = _generate_id()
+    conn.execute(
         """
         INSERT INTO tracked_papers
-            (doi, title, authors, year, abstract, source_url, ss_id, oa_id, added_at, active)
+            (id, doi, title, authors, year, abstract, source_url, ss_id, oa_id, added_at, active)
         VALUES
-            (:doi, :title, :authors, :year, :abstract, :source_url, :ss_id, :oa_id, :added_at, 1)
+            (:id, :doi, :title, :authors, :year, :abstract, :source_url, :ss_id, :oa_id, :added_at, 1)
         """,
         {
+            "id": paper_id,
             "doi": paper.get("doi"),
             "title": paper.get("title"),
-            "authors": paper.get("authors"),
+            "authors": json.dumps(paper.get("authors")) if isinstance(paper.get("authors"), (list, dict)) else paper.get("authors"),
             "year": paper.get("year"),
             "abstract": paper.get("abstract"),
             "source_url": paper.get("source_url"),
@@ -121,7 +129,7 @@ def insert_tracked_paper(conn: sqlite3.Connection, paper: dict[str, Any]) -> int
             "added_at": _now(),
         },
     )
-    return cur.lastrowid  # type: ignore[return-value]
+    return paper_id
 
 
 def get_tracked_paper_by_doi(conn: sqlite3.Connection, doi: str) -> sqlite3.Row | None:
@@ -136,7 +144,7 @@ def get_tracked_paper_by_ss_id(conn: sqlite3.Connection, ss_id: str) -> sqlite3.
     ).fetchone()
 
 
-def get_tracked_paper_by_id(conn: sqlite3.Connection, paper_id: int) -> sqlite3.Row | None:
+def get_tracked_paper_by_id(conn: sqlite3.Connection, paper_id: str) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT * FROM tracked_papers WHERE id = ?", (paper_id,)
     ).fetchone()
@@ -153,7 +161,7 @@ def list_tracked_papers(
 
 
 def set_tracked_paper_active(
-    conn: sqlite3.Connection, paper_id: int, active: bool
+    conn: sqlite3.Connection, paper_id: str, active: bool
 ) -> None:
     conn.execute(
         "UPDATE tracked_papers SET active = ? WHERE id = ?",
@@ -161,7 +169,7 @@ def set_tracked_paper_active(
     )
 
 
-def delete_tracked_paper(conn: sqlite3.Connection, paper_id: int) -> None:
+def delete_tracked_paper(conn: sqlite3.Connection, paper_id: str) -> None:
     conn.execute(
         "DELETE FROM analyses WHERE tracked_paper_id = ?", (paper_id,)
     )
@@ -176,8 +184,8 @@ def delete_tracked_paper(conn: sqlite3.Connection, paper_id: int) -> None:
 
 
 def upsert_citing_paper(
-    conn: sqlite3.Connection, tracked_paper_id: int, paper: dict[str, Any]
-) -> tuple[int, bool]:
+    conn: sqlite3.Connection, tracked_paper_id: str, paper: dict[str, Any]
+) -> tuple[str, bool]:
     """
     Insert a citing paper if it doesn't exist yet (keyed on doi or ss_id).
 
@@ -198,20 +206,22 @@ def upsert_citing_paper(
     if existing:
         return existing["id"], False
 
-    cur = conn.execute(
+    paper_id = _generate_id()
+    conn.execute(
         """
         INSERT INTO citing_papers
-            (tracked_paper_id, doi, title, authors, year, abstract,
+            (id, tracked_paper_id, doi, title, authors, year, abstract,
              ss_id, oa_id, pdf_url, pdf_status, created_at)
         VALUES
-            (:tracked_paper_id, :doi, :title, :authors, :year, :abstract,
+            (:id, :tracked_paper_id, :doi, :title, :authors, :year, :abstract,
              :ss_id, :oa_id, :pdf_url, 'pending', :created_at)
         """,
         {
+            "id": paper_id,
             "tracked_paper_id": tracked_paper_id,
             "doi": paper.get("doi"),
             "title": paper.get("title"),
-            "authors": paper.get("authors"),
+            "authors": json.dumps(paper.get("authors")) if isinstance(paper.get("authors"), (list, dict)) else paper.get("authors"),
             "year": paper.get("year"),
             "abstract": paper.get("abstract"),
             "ss_id": paper.get("ss_id"),
@@ -220,11 +230,11 @@ def upsert_citing_paper(
             "created_at": _now(),
         },
     )
-    return cur.lastrowid, True  # type: ignore[return-value]
+    return paper_id, True
 
 
 def get_citing_papers_pending_pdf(
-    conn: sqlite3.Connection, tracked_paper_id: int
+    conn: sqlite3.Connection, tracked_paper_id: str
 ) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM citing_papers WHERE tracked_paper_id = ? AND pdf_status = 'pending'",
@@ -233,7 +243,7 @@ def get_citing_papers_pending_pdf(
 
 
 def get_citing_papers_for_analysis(
-    conn: sqlite3.Connection, tracked_paper_id: int
+    conn: sqlite3.Connection, tracked_paper_id: str
 ) -> list[sqlite3.Row]:
     return conn.execute(
         """
@@ -249,7 +259,7 @@ def get_citing_papers_for_analysis(
 
 
 def update_citing_paper_pdf(
-    conn: sqlite3.Connection, citing_paper_id: int, status: str, pdf_url: str | None = None
+    conn: sqlite3.Connection, citing_paper_id: str, status: str, pdf_url: str | None = None
 ) -> None:
     conn.execute(
         "UPDATE citing_papers SET pdf_status = ?, pdf_url = COALESCE(?, pdf_url) WHERE id = ?",
@@ -258,7 +268,7 @@ def update_citing_paper_pdf(
 
 
 def update_citing_paper_text(
-    conn: sqlite3.Connection, citing_paper_id: int, text: str
+    conn: sqlite3.Connection, citing_paper_id: str, text: str
 ) -> None:
     conn.execute(
         "UPDATE citing_papers SET extracted_text = ?, text_extracted = 1 WHERE id = ?",
@@ -267,7 +277,7 @@ def update_citing_paper_text(
 
 
 def get_citing_paper_by_doi(
-    conn: sqlite3.Connection, tracked_paper_id: int, doi: str
+    conn: sqlite3.Connection, tracked_paper_id: str, doi: str
 ) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT * FROM citing_papers WHERE tracked_paper_id = ? AND doi = ?",
@@ -276,10 +286,16 @@ def get_citing_paper_by_doi(
 
 
 def list_citing_papers(
-    conn: sqlite3.Connection, tracked_paper_id: int
+    conn: sqlite3.Connection, tracked_paper_id: str
 ) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT * FROM citing_papers WHERE tracked_paper_id = ? ORDER BY created_at",
+        """
+        SELECT cp.*, a.id IS NOT NULL AS has_analysis
+        FROM citing_papers cp
+        LEFT JOIN analyses a ON a.citing_paper_id = cp.id
+        WHERE cp.tracked_paper_id = ?
+        ORDER BY cp.created_at
+        """,
         (tracked_paper_id,),
     ).fetchall()
 
@@ -287,21 +303,23 @@ def list_citing_papers(
 # ── analyses ───────────────────────────────────────────────────────────────
 
 
-def insert_analysis(conn: sqlite3.Connection, analysis: dict[str, Any]) -> int:
-    cur = conn.execute(
+def insert_analysis(conn: sqlite3.Connection, analysis: dict[str, Any]) -> str:
+    analysis_id = _generate_id()
+    conn.execute(
         """
         INSERT INTO analyses
-            (citing_paper_id, tracked_paper_id, backend_used,
+            (id, citing_paper_id, tracked_paper_id, backend_used,
              summary, relationship_type, new_evidence,
              flaws_identified, assumptions_questioned, other_notes,
              raw_response, analysed_at)
         VALUES
-            (:citing_paper_id, :tracked_paper_id, :backend_used,
+            (:id, :citing_paper_id, :tracked_paper_id, :backend_used,
              :summary, :relationship_type, :new_evidence,
              :flaws_identified, :assumptions_questioned, :other_notes,
              :raw_response, :analysed_at)
         """,
         {
+            "id": analysis_id,
             "citing_paper_id": analysis["citing_paper_id"],
             "tracked_paper_id": analysis["tracked_paper_id"],
             "backend_used": analysis.get("backend_used"),
@@ -315,11 +333,11 @@ def insert_analysis(conn: sqlite3.Connection, analysis: dict[str, Any]) -> int:
             "analysed_at": _now(),
         },
     )
-    return cur.lastrowid  # type: ignore[return-value]
+    return analysis_id
 
 
 def list_analyses(
-    conn: sqlite3.Connection, tracked_paper_id: int
+    conn: sqlite3.Connection, tracked_paper_id: str
 ) -> list[sqlite3.Row]:
     return conn.execute(
         """
@@ -340,21 +358,22 @@ def list_analyses(
 def insert_run(
     conn: sqlite3.Connection,
     triggered_by: str,
-    tracked_paper_id: int | None = None,
-) -> int:
-    cur = conn.execute(
+    tracked_paper_id: str | None = None,
+) -> str:
+    run_id = _generate_id()
+    conn.execute(
         """
-        INSERT INTO runs (triggered_by, tracked_paper_id, started_at)
-        VALUES (?, ?, ?)
+        INSERT INTO runs (id, triggered_by, tracked_paper_id, started_at)
+        VALUES (?, ?, ?, ?)
         """,
-        (triggered_by, tracked_paper_id, _now()),
+        (run_id, triggered_by, tracked_paper_id, _now()),
     )
-    return cur.lastrowid  # type: ignore[return-value]
+    return run_id
 
 
 def finish_run(
     conn: sqlite3.Connection,
-    run_id: int,
+    run_id: str,
     new_papers_found: int,
     papers_analysed: int,
     errors: list[str] | None = None,

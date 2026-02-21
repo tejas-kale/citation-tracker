@@ -31,6 +31,23 @@ def _get_db(cfg: Any) -> Path:
     return cfg.db_path
 
 
+def _print_markdown(content: str) -> None:
+    """Print Markdown content using glow (if available) or rich."""
+    import shutil
+    import subprocess
+
+    if shutil.which("glow"):
+        try:
+            subprocess.run(["glow", "-"], input=content.encode(), check=True)
+            return
+        except Exception:
+            pass
+
+    from rich.markdown import Markdown
+
+    console.print(Markdown(content))
+
+
 @click.group()
 @click.option("--config", "config_path", default=None, help="Path to config.yaml")
 @click.option("--env", "env_path", default=None, help="Path to .env file")
@@ -176,35 +193,44 @@ def list_papers(ctx: click.Context) -> None:
 
 
 @main.command("pause")
-@click.option("--doi", required=True, help="DOI of the paper to pause")
+@click.option("--id", "paper_id", help="ID of the paper to pause")
+@click.option("--doi", help="DOI of the paper to pause")
 @click.pass_context
-def pause_paper(ctx: click.Context, doi: str) -> None:
+def pause_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
     """Pause tracking a paper (keeps all history)."""
-    _set_active(ctx, doi, active=False)
+    _set_active(ctx, paper_id, doi, active=False)
 
 
 @main.command("resume")
-@click.option("--doi", required=True, help="DOI of the paper to resume")
+@click.option("--id", "paper_id", help="ID of the paper to resume")
+@click.option("--doi", help="DOI of the paper to resume")
 @click.pass_context
-def resume_paper(ctx: click.Context, doi: str) -> None:
+def resume_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
     """Resume tracking a paper."""
-    _set_active(ctx, doi, active=True)
+    _set_active(ctx, paper_id, doi, active=True)
 
 
-def _set_active(ctx: click.Context, doi: str, active: bool) -> None:
+def _set_active(ctx: click.Context, paper_id: str | None, doi: str | None, active: bool) -> None:
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
     from citation_tracker.db import (
         get_conn,
         get_tracked_paper_by_doi,
+        get_tracked_paper_by_id,
         set_tracked_paper_active,
     )
 
     with get_conn(db_path) as conn:
-        paper = get_tracked_paper_by_doi(conn, doi)
+        paper = None
+        if paper_id:
+            paper = get_tracked_paper_by_id(conn, paper_id)
+        elif doi:
+            paper = get_tracked_paper_by_doi(conn, doi)
+        
         if paper is None:
-            console.print(f"[red]Paper with DOI {doi!r} not found.[/red]")
+            console.print(f"[red]Paper not found.[/red]")
             sys.exit(1)
+            
         set_tracked_paper_active(conn, paper["id"], active)
         action = "resumed" if active else "paused"
         console.print(f"[green]Paper {action}: {paper['title']}[/green]")
@@ -214,10 +240,11 @@ def _set_active(ctx: click.Context, doi: str, active: bool) -> None:
 
 
 @main.command("remove")
-@click.option("--doi", required=True, help="DOI of the paper to remove")
+@click.option("--id", "paper_id", help="ID of the paper to remove")
+@click.option("--doi", help="DOI of the paper to remove")
 @click.confirmation_option(prompt="This will delete all data for this paper. Continue?")
 @click.pass_context
-def remove_paper(ctx: click.Context, doi: str) -> None:
+def remove_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
     """Remove a paper and all its data."""
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
@@ -225,13 +252,20 @@ def remove_paper(ctx: click.Context, doi: str) -> None:
         delete_tracked_paper,
         get_conn,
         get_tracked_paper_by_doi,
+        get_tracked_paper_by_id,
     )
 
     with get_conn(db_path) as conn:
-        paper = get_tracked_paper_by_doi(conn, doi)
+        paper = None
+        if paper_id:
+            paper = get_tracked_paper_by_id(conn, paper_id)
+        elif doi:
+            paper = get_tracked_paper_by_doi(conn, doi)
+            
         if paper is None:
-            console.print(f"[red]Paper with DOI {doi!r} not found.[/red]")
+            console.print(f"[red]Paper not found.[/red]")
             sys.exit(1)
+            
         delete_tracked_paper(conn, paper["id"])
         console.print(f"[green]Removed paper: {paper['title']}[/green]")
 
@@ -292,27 +326,28 @@ def run_pipeline(
         if section:
             report_sections.append(section)
 
-    # Build and optionally email report
+    # Build and save report
     if report_sections:
-        from citation_tracker.report import build_full_report
+        from citation_tracker.report import build_full_report, render_full_report_html
+        from datetime import datetime
 
-        report = build_full_report(report_sections)
-        console.print("\n[bold]Report:[/bold]\n")
-        console.print(report)
+        report_md = build_full_report(report_sections)
+        console.print("\n[bold]Report (Markdown):[/bold]\n")
+        _print_markdown(report_md)
 
-        if cfg.email_from and cfg.email_to and cfg.resend_api_key:
-            from citation_tracker.mailer import send_report
-
-            try:
-                send_report(
-                    report,
-                    from_address=cfg.email_from,
-                    to_address=cfg.email_to,
-                    api_key=cfg.resend_api_key,
-                )
-                console.print("[green]Report emailed.[/green]")
-            except Exception as exc:
-                console.print(f"[yellow]Email failed: {exc}[/yellow]")
+        # Render HTML and save to reports_dir
+        html_content = render_full_report_html(report_md)
+        
+        reports_dir = cfg.reports_dir
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = reports_dir / f"report_{timestamp}.html"
+        
+        with report_path.open("w") as f:
+            f.write(html_content)
+        
+        console.print(f"\n[bold green]Report saved to: {report_path}[/bold green]")
 
     with get_conn(db_path) as conn:
         finish_run(conn, run_id, total_new, total_analysed, all_errors)
@@ -471,44 +506,103 @@ def _process_paper(
 
 @main.command("ingest")
 @click.argument("pdf_path", type=click.Path(exists=True))
-@click.option("--doi", required=True, help="DOI of the citing paper")
+@click.option("--id", "paper_id", required=True, help="ID of the tracked paper being cited")
+@click.option("--doi", help="DOI of the citing paper (optional, will try to extract if not provided)")
 @click.pass_context
-def ingest(ctx: click.Context, pdf_path: str, doi: str) -> None:
-    """Ingest a manually downloaded PDF and link it to a citing paper."""
+def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) -> None:
+    """Ingest a manually downloaded PDF as a citation for a tracked paper."""
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
-    from citation_tracker.db import get_conn
+    from citation_tracker.db import get_conn, get_tracked_paper_by_id, upsert_citing_paper
     from citation_tracker.fetcher import _doi_to_path
     from citation_tracker.parser import extract_text
     import shutil
 
     with get_conn(db_path) as conn:
-        row = conn.execute(
-            "SELECT * FROM citing_papers WHERE doi = ?", (doi,)
-        ).fetchone()
-        if row is None:
-            console.print(f"[red]No citing paper with DOI {doi!r} found in database.[/red]")
+        tracked = get_tracked_paper_by_id(conn, paper_id)
+        if tracked is None:
+            console.print(f"[red]Tracked paper with ID {paper_id} not found.[/red]")
             sys.exit(1)
 
-    # Copy PDF to pdfs dir using the same DOI path scheme as fetcher.py
-    safe_doi = _doi_to_path(doi)
-    dest_dir = cfg.pdfs_dir / safe_doi
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / "paper.pdf"
-    shutil.copy2(pdf_path, dest)
+    # Resolve citing paper metadata
+    citing_paper = _resolve_paper(url=None, doi=doi, ss_id=None)
+    if citing_paper is None:
+        # If we can't resolve metadata, create a stub from filename
+        title_guess = Path(pdf_path).stem.replace("_", " ").replace("-", " ")
+        citing_paper = {
+            "doi": doi,
+            "title": title_guess,
+            "authors": None,
+            "year": None,
+            "abstract": None,
+            "ss_id": None,
+            "oa_id": None,
+            "pdf_url": None,
+        }
 
-    text = extract_text(dest)
     with get_conn(db_path) as conn:
+        cid, is_new = upsert_citing_paper(conn, paper_id, citing_paper)
+        
+        # Copy PDF to pdfs dir
+        safe_doi = _doi_to_path(citing_paper.get("doi") or f"manual-{cid}")
+        dest_dir = cfg.pdfs_dir / safe_doi
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / "paper.pdf"
+        shutil.copy2(pdf_path, dest)
+
+        text = extract_text(dest)
         from citation_tracker.db import update_citing_paper_pdf, update_citing_paper_text
 
-        update_citing_paper_pdf(conn, row["id"], "manual")
+        update_citing_paper_pdf(conn, cid, "manual")
         if text:
-            update_citing_paper_text(conn, row["id"], text)
+            update_citing_paper_text(conn, cid, text)
 
-    console.print(f"[green]Ingested PDF for DOI {doi}[/green]")
+    console.print(f"[green]Ingested citation for paper ID {paper_id}: {citing_paper['title']}[/green]")
     if not text:
         console.print("[yellow]Warning: could not extract text from PDF.[/yellow]")
+
+
+# ── citations ──────────────────────────────────────────────────────────────
+
+
+@main.command("citations")
+@click.option("--id", "paper_id", required=True, help="ID of the tracked paper")
+@click.pass_context
+def list_citations(ctx: click.Context, paper_id: str) -> None:
+    """List all citing papers for a given tracked paper."""
+    cfg = ctx.obj["cfg"]
+    db_path = _get_db(cfg)
+
+    from citation_tracker.db import get_conn, get_tracked_paper_by_id, list_citing_papers
+
+    with get_conn(db_path) as conn:
+        tracked = get_tracked_paper_by_id(conn, paper_id)
+        if tracked is None:
+            console.print(f"[red]Paper with ID {paper_id} not found.[/red]")
+            sys.exit(1)
+        citations = list_citing_papers(conn, paper_id)
+
+    if not citations:
+        console.print(f"No citations found for: {tracked['title']}")
+        return
+
+    table = Table(title=f"Citations for: {tracked['title']}")
+    table.add_column("ID", justify="right")
+    table.add_column("Title")
+    table.add_column("DOI")
+    table.add_column("Status")
+    table.add_column("Summarised")
+
+    for c in citations:
+        table.add_row(
+            str(c["id"]),
+            (c["title"] or "")[:50],
+            c["doi"] or "",
+            c["pdf_status"],
+            "✓" if c["has_analysis"] else "✗",
+        )
+    console.print(table)
 
 
 # ── status ─────────────────────────────────────────────────────────────────
@@ -540,9 +634,10 @@ def status(ctx: click.Context) -> None:
 
 
 @main.command("show")
-@click.option("--doi", required=True, help="DOI of the tracked paper to show")
+@click.option("--id", "paper_id", help="ID of the tracked paper")
+@click.option("--doi", help="DOI of the tracked paper to show")
 @click.pass_context
-def show(ctx: click.Context, doi: str) -> None:
+def show(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
     """Show all analyses for a given tracked paper."""
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
@@ -550,15 +645,22 @@ def show(ctx: click.Context, doi: str) -> None:
     from citation_tracker.db import (
         get_conn,
         get_tracked_paper_by_doi,
+        get_tracked_paper_by_id,
         list_analyses,
     )
     from citation_tracker.report import build_report
 
     with get_conn(db_path) as conn:
-        paper = get_tracked_paper_by_doi(conn, doi)
+        paper = None
+        if paper_id:
+            paper = get_tracked_paper_by_id(conn, paper_id)
+        elif doi:
+            paper = get_tracked_paper_by_doi(conn, doi)
+            
         if paper is None:
-            console.print(f"[red]Paper with DOI {doi!r} not found.[/red]")
+            console.print(f"[red]Tracked paper not found.[/red]")
             sys.exit(1)
+            
         analyses = list_analyses(conn, paper["id"])
         failed_pdfs = conn.execute(
             "SELECT * FROM citing_papers WHERE tracked_paper_id=? AND pdf_status='failed'",
@@ -566,4 +668,4 @@ def show(ctx: click.Context, doi: str) -> None:
         ).fetchall()
 
     report = build_report(paper, analyses, failed_pdfs)
-    console.print(report)
+    _print_markdown(report)

@@ -4,19 +4,14 @@
 backend: openrouter
 
 openrouter:
-  model: qwen/qwen3-235b-a22b
+  model: minimax/minimax-m2.5
   api_key_env: OPENROUTER_API_KEY
 
 claude_code:
   flags: ""   # optional extra flags passed to claude -p
 
-# Directory for database and downloaded PDFs
-data_dir: data
-
-# Email settings (Resend)
-resend_api_key_env: RESEND_API_KEY
-email_from: "Citation Tracker <noreply@yourdomain.com>"
-email_to: "you@example.com"
+# Directory for database, PDFs, and reports
+data_dir: "~/.citation-tracker"
 
 # Your email address for the Unpaywall API (required by their usage policy)
-unpaywall_email: "you@example.com"
+unpaywall_email: "kaletejas2006@gmail.com"

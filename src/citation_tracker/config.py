@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 @dataclass
 class OpenRouterConfig:
-    model: str = "qwen/qwen3-235b-a22b"
+    model: str = "minimax/minimax-m2.5"
     api_key_env: str = "OPENROUTER_API_KEY"
 
     @property
@@ -31,10 +31,7 @@ class Config:
     backend: str = "openrouter"
     openrouter: OpenRouterConfig = field(default_factory=OpenRouterConfig)
     claude_code: ClaudeCodeConfig = field(default_factory=ClaudeCodeConfig)
-    data_dir: Path = field(default_factory=lambda: Path("data"))
-    resend_api_key_env: str = "RESEND_API_KEY"
-    email_from: str = ""
-    email_to: str = ""
+    data_dir: Path = field(default_factory=lambda: Path.home() / ".citation-tracker")
     unpaywall_email: str = ""
 
     @property
@@ -50,8 +47,8 @@ class Config:
         return self.data_dir / "manual"
 
     @property
-    def resend_api_key(self) -> str:
-        return os.environ.get(self.resend_api_key_env, "")
+    def reports_dir(self) -> Path:
+        return self.data_dir / "reports"
 
 
 def load_config(config_path: Path | None = None, env_path: Path | None = None) -> Config:
@@ -86,16 +83,7 @@ def load_config(config_path: Path | None = None, env_path: Path | None = None) -
             )
 
         if "data_dir" in raw:
-            config.data_dir = Path(raw["data_dir"])
-
-        if "resend_api_key_env" in raw:
-            config.resend_api_key_env = raw["resend_api_key_env"]
-
-        if "email_from" in raw:
-            config.email_from = raw["email_from"]
-
-        if "email_to" in raw:
-            config.email_to = raw["email_to"]
+            config.data_dir = Path(raw["data_dir"]).expanduser()
 
         if "unpaywall_email" in raw:
             config.unpaywall_email = raw["unpaywall_email"]
