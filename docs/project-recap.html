@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Citation Tracker Project Recap</title>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.0/dist/mermaid.min.js"></script>
+    <style>
+        :root {
+            --bg: #fdfaf3;
+            --surface: #ffffff;
+            --surface-dim: #f5f2e9;
+            --border: rgba(60, 50, 40, 0.1);
+            --text: #2c241e;
+            --text-dim: #6b5e52;
+            --accent-blue: #4a6fa5;
+            --accent-blue-dim: rgba(74, 111, 165, 0.1);
+            --accent-green: #5a8a6b;
+            --accent-green-dim: rgba(90, 138, 107, 0.1);
+            --accent-amber: #c48c46;
+            --accent-amber-dim: rgba(196, 140, 70, 0.1);
+            --accent-red: #a54a4a;
+            --accent-red-dim: rgba(165, 74, 74, 0.1);
+            --font-serif: 'Crimson Pro', serif;
+            --font-display: 'Playfair Display', serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --shadow: 0 4px 12px rgba(60, 50, 40, 0.05);
+            --nav-width: 240px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #1a1816;
+                --surface: #242220;
+                --surface-dim: #1e1c1a;
+                --border: rgba(200, 180, 160, 0.1);
+                --text: #e0d8cf;
+                --text-dim: #a0958a;
+                --accent-blue: #6d90c4;
+                --accent-blue-dim: rgba(109, 144, 196, 0.15);
+                --accent-green: #7ca88b;
+                --accent-green-dim: rgba(124, 168, 139, 0.15);
+                --accent-amber: #e0ac69;
+                --accent-amber-dim: rgba(224, 172, 105, 0.15);
+                --accent-red: #c46d6d;
+                --accent-red-dim: rgba(196, 109, 109, 0.15);
+                --shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            }
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: var(--font-serif);
+            font-size: 18px;
+            line-height: 1.6;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Responsive Sidebar Navigation */
+        .sidebar {
+            width: var(--nav-width);
+            height: 100vh;
+            position: fixed;
+            left: 0;
+            top: 0;
+            border-right: 1px solid var(--border);
+            padding: 2rem 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            z-index: 100;
+            background: var(--bg);
+        }
+
+        .sidebar h1 {
+            font-family: var(--font-display);
+            font-size: 1.5rem;
+            margin: 0;
+            color: var(--text);
+            line-height: 1.2;
+        }
+
+        .nav-links {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .nav-links a {
+            text-decoration: none;
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+            display: block;
+        }
+
+        .nav-links a:hover {
+            background: var(--surface-dim);
+            color: var(--text);
+        }
+
+        .nav-links a.active {
+            background: var(--accent-blue-dim);
+            color: var(--accent-blue);
+            font-weight: 600;
+        }
+
+        main {
+            margin-left: var(--nav-width);
+            flex: 1;
+            padding: 4rem;
+            max-width: 1200px;
+        }
+
+        @media (max-width: 900px) {
+            body { flex-direction: column; }
+            .sidebar {
+                width: 100%;
+                height: auto;
+                position: relative;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+                padding: 1rem;
+            }
+            .nav-links {
+                flex-direction: row;
+                overflow-x: auto;
+                padding-bottom: 0.5rem;
+            }
+            .nav-links a { white-space: nowrap; }
+            main { margin-left: 0; padding: 2rem 1.5rem; }
+        }
+
+        section {
+            margin-bottom: 6rem;
+            scroll-margin-top: 2rem;
+            animation: fadeUp 0.6s ease-out forwards;
+        }
+
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        h2 {
+            font-family: var(--font-display);
+            font-size: 2.5rem;
+            margin-bottom: 2rem;
+            position: relative;
+        }
+
+        h2::after {
+            content: '';
+            position: absolute;
+            bottom: -8px;
+            left: 0;
+            width: 60px;
+            height: 3px;
+            background: var(--accent-blue);
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: var(--shadow);
+            margin-bottom: 2rem;
+        }
+
+        .hero-card {
+            border-top: 4px solid var(--accent-blue);
+            background: linear-gradient(135deg, var(--surface) 0%, var(--surface-dim) 100%);
+        }
+
+        /* KPI Grid */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+
+        .kpi-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 1.5rem;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .kpi-value {
+            font-family: var(--font-mono);
+            font-size: 2.5rem;
+            font-weight: 700;
+            display: block;
+            margin-bottom: 0.5rem;
+        }
+
+        .kpi-label {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .status-working { color: var(--accent-green); border-bottom: 3px solid var(--accent-green); }
+        .status-progress { color: var(--accent-blue); border-bottom: 3px solid var(--accent-blue); }
+        .status-debt { color: var(--accent-amber); border-bottom: 3px solid var(--accent-amber); }
+
+        /* Mermaid Wrapper */
+        .mermaid-wrap {
+            position: relative;
+            background: var(--surface-dim);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            margin: 2rem 0;
+            overflow: hidden;
+            cursor: grab;
+        }
+
+        .mermaid-wrap:active { cursor: grabbing; }
+
+        .zoom-controls {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            display: flex;
+            gap: 0.5rem;
+            z-index: 10;
+        }
+
+        .zoom-controls button {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            width: 32px;
+            height: 32px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: var(--font-mono);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .zoom-controls button:hover { background: var(--bg); border-color: var(--text-dim); }
+
+        /* Timeline View */
+        .timeline {
+            position: relative;
+            padding-left: 2rem;
+            border-left: 2px solid var(--border);
+        }
+
+        .timeline-item {
+            position: relative;
+            margin-bottom: 3rem;
+        }
+
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -2rem;
+            top: 0.5rem;
+            width: 12px;
+            height: 12px;
+            background: var(--accent-blue);
+            border-radius: 50%;
+            transform: translateX(-50%);
+            border: 3px solid var(--bg);
+        }
+
+        .timeline-date {
+            font-family: var(--font-mono);
+            font-size: 0.9rem;
+            color: var(--accent-blue);
+            margin-bottom: 0.5rem;
+            display: block;
+        }
+
+        .timeline-content h3 {
+            margin: 0 0 1rem 0;
+            font-size: 1.4rem;
+        }
+
+        /* Debt Cards */
+        .debt-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .debt-card {
+            border-left: 4px solid var(--accent-amber);
+            background: var(--accent-amber-dim);
+            padding: 1.5rem;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .debt-card.high { border-left-color: var(--accent-red); background: var(--accent-red-dim); }
+
+        .severity {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+            display: inline-block;
+        }
+
+        .severity-high { background: var(--accent-red); color: white; }
+        .severity-med { background: var(--accent-amber); color: white; }
+
+        code {
+            font-family: var(--font-mono);
+            background: var(--surface-dim);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .tag {
+            display: inline-block;
+            background: var(--surface-dim);
+            border: 1px solid var(--border);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-right: 0.5rem;
+        }
+
+        ul { padding-left: 1.5rem; }
+        li { margin-bottom: 0.5rem; }
+
+    </style>
+</head>
+<body>
+
+    <nav class="sidebar">
+        <h1>Citation Tracker</h1>
+        <ul class="nav-links">
+            <li><a href="#identity" class="active">Identity</a></li>
+            <li><a href="#architecture">Architecture</a></li>
+            <li><a href="#activity">Activity</a></li>
+            <li><a href="#decisions">Decisions</a></li>
+            <li><a href="#state">State of Things</a></li>
+            <li><a href="#mental-model">Mental Model</a></li>
+            <li><a href="#debt">Hotspots</a></li>
+            <li><a href="#next">Next Steps</a></li>
+        </ul>
+    </nav>
+
+    <main>
+        <section id="identity">
+            <h2>Project Identity</h2>
+            <div class="card hero-card">
+                <p style="font-size: 1.4rem; margin-top: 0;"><strong>citation-tracker v0.1.0</strong></p>
+                <p>An automated pipeline for tracking academic citations and performing deep qualitative analysis using LLMs. Designed for researchers who want to see not just *who* cited them, but *how* their work is being used, challenged, or extended.</p>
+                <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+                    <span class="tag">Python 3.12+</span>
+                    <span class="tag">SQLite (WAL)</span>
+                    <span class="tag">OpenRouter / Claude</span>
+                    <span class="tag">PyMuPDF4LLM</span>
+                </div>
+            </div>
+        </section>
+
+        <section id="architecture">
+            <h2>Architecture Snapshot</h2>
+            <div class="mermaid-wrap" id="mermaid-container">
+                <div class="zoom-controls">
+                    <button onclick="zoom(1.1)">+</button>
+                    <button onclick="zoom(0.9)">-</button>
+                    <button onclick="resetZoom()">↺</button>
+                </div>
+                <pre class="mermaid">
+graph TD
+    subgraph CLI ["CLI (click)"]
+        CLI_Entry["src/cli.py"]
+    end
+
+    subgraph Core ["Processing Engine"]
+        Fetcher["src/fetcher.py<br/>(Unpaywall / PDF Fetch)"]
+        Parser["src/parser.py<br/>(PyMuPDF4LLM)"]
+        Analyser["src/analyser.py<br/>(LLM Orchestration)"]
+        Report["src/report.py<br/>(HTML/MD Generator)"]
+    end
+
+    subgraph Data ["Storage & APIs"]
+        DB[("SQLite Database<br/>(db.py)")]
+        Local["~/.citation-tracker/<br/>(PDFs & Reports)"]
+        APIs["Sources (Semantic Scholar / OpenAlex)"]
+    end
+
+    CLI_Entry --> DB
+    CLI_Entry --> Fetcher
+    Fetcher --> APIs
+    Fetcher --> Local
+    Parser --> Local
+    Analyser --> Parser
+    Analyser --> DB
+    Report --> DB
+    Report --> Local
+                </pre>
+            </div>
+        </section>
+
+        <section id="activity">
+            <h2>Recent Activity</h2>
+            <div class="timeline">
+                <div class="timeline-item">
+                    <span class="timeline-date">Feb 21, 2026</span>
+                    <div class="timeline-content">
+                        <h3>The Great Refactor & Hardening</h3>
+                        <p>A massive push that transitioned the prototype into a professional CLI tool.</p>
+                        <ul>
+                            <li><strong>ID Overhaul:</strong> Switched from integers to 8-character short UUIDs for global stability.</li>
+                            <li><strong>Local First:</strong> Pivoted from email (Resend) to local HTML reports in <code>~/.citation-tracker/reports</code>.</li>
+                            <li><strong>UI/UX:</strong> Integrated <code>glow</code> for terminal Markdown and <code>rich</code> for beautiful CLI output.</li>
+                            <li><strong>CI/CD:</strong> Established GitHub Actions and comprehensive unit test coverage.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="decisions">
+            <h2>Decision Log</h2>
+            <div class="card">
+                <h3>Short UUIDs (8-char)</h3>
+                <p><strong>Decided:</strong> Use <code>uuid.uuid4().hex[:8]</code> for all entities.</p>
+                <p><strong>Rationale:</strong> Avoids the "leaky abstraction" of sequential IDs and prevents collisions if the database is reset or synced across devices, while staying short enough for easy terminal input.</p>
+            </div>
+            <div class="card">
+                <h3>PyMuPDF-Layout Integration</h3>
+                <p><strong>Decided:</strong> Add <code>pymupdf-layout</code> as a core dependency.</p>
+                <p><strong>Rationale:</strong> Standard PDF parsers struggle with multi-column academic layouts. Explicit layout analysis ensures the LLM receives the text in the correct reading order.</p>
+            </div>
+            <div class="card">
+                <h3>Local-Only Reports</h3>
+                <p><strong>Decided:</strong> Abandon email delivery in favor of a local reporting directory.</p>
+                <p><strong>Rationale:</strong> Reduces external dependencies (no API keys for mailers) and creates a persistent, searchable archive of research impact on the user's machine.</p>
+            </div>
+        </section>
+
+        <section id="state">
+            <h2>State of Things</h2>
+            <div class="kpi-grid">
+                <div class="kpi-card status-working">
+                    <span class="kpi-value">100%</span>
+                    <span class="kpi-label">Core Pipeline</span>
+                </div>
+                <div class="kpi-card status-progress">
+                    <span class="kpi-value">4</span>
+                    <span class="kpi-label">Test Modules</span>
+                </div>
+                <div class="kpi-card status-debt">
+                    <span class="kpi-value">Low</span>
+                    <span class="kpi-label">Cognitive Debt</span>
+                </div>
+            </div>
+            <div class="card">
+                <p><strong>Stable:</strong> Database schema, CLI interface, Semantic Scholar/OpenAlex integration, PDF-to-Markdown pipeline.</p>
+                <p><strong>In Progress:</strong> Fine-tuning the <code>minimax-m2.5</code> default model prompt for higher-density JSON extraction.</p>
+            </div>
+        </section>
+
+        <section id="mental-model">
+            <h2>Mental Model Essentials</h2>
+            <ul>
+                <li><strong>The 8-Char Key:</strong> Everything revolves around the short ID. Use <code>list</code> to find them, and <code>run --id [ID]</code> to focus.</li>
+                <li><strong>Storage:</strong> <code>~/.citation-tracker/</code> is the source of truth. If things get weird, check the SQLite DB there.</li>
+                <li><strong>Structured Output:</strong> The <code>analyser.py</code> <em>requires</em> valid JSON from the LLM. It's the most brittle part of the pipeline.</li>
+                <li><strong>Open Access:</strong> The tool is optimized for OA papers via Unpaywall. For paywalled papers, manual ingestion (<code>ingest</code>) is the intended escape hatch.</li>
+            </ul>
+        </section>
+
+        <section id="debt">
+            <h2>Cognitive Debt Hotspots</h2>
+            <div class="debt-grid">
+                <div class="debt-card high">
+                    <span class="severity severity-high">High</span>
+                    <h3>Analyser Context Limits</h3>
+                    <p>Current chunking logic in <code>analyser.py</code> is simple. Very long papers might lose nuance during summarization before the final relationship analysis.</p>
+                    <p><em>Suggestion: Implement a "map-reduce" style analysis for complex papers.</em></p>
+                </div>
+                <div class="debt-card">
+                    <span class="severity severity-med">Medium</span>
+                    <h3>Fetch Reliability</h3>
+                    <p>Dependency on Unpaywall means many citations might be found but not "fetched."</p>
+                    <p><em>Suggestion: Add more aggressive PDF discovery (e.g., ArXiv API, Crossref) or better UI feedback for failed fetches.</em></p>
+                </div>
+            </div>
+        </section>
+
+        <section id="next">
+            <h2>Next Steps</h2>
+            <ul>
+                <li><strong>Network Visualization:</strong> Generate Mermaid or D3 graphs showing the "influence tree" of papers.</li>
+                <li><strong>Batch Mode:</strong> Improve the <code>run</code> command to handle hundreds of citations more gracefully with better concurrency.</li>
+                <li><strong>Google Scholar:</strong> Investigate scrapers or alternative APIs to bridge the gap in citation discovery.</li>
+            </ul>
+        </section>
+    </main>
+
+    <script>
+        // Mermaid Initialization
+        mermaid.initialize({
+            theme: 'base',
+            themeVariables: {
+                primaryColor: '#fdfaf3',
+                primaryTextColor: '#2c241e',
+                primaryBorderColor: '#4a6fa5',
+                lineColor: '#6b5e52',
+                secondaryColor: '#f5f2e9',
+                tertiaryColor: '#ffffff'
+            }
+        });
+
+        // Zoom Logic
+        let currentZoom = 1;
+        const container = document.getElementById('mermaid-container');
+        const mermaidPre = container.querySelector('.mermaid');
+
+        function zoom(factor) {
+            currentZoom *= factor;
+            applyTransform();
+        }
+
+        function resetZoom() {
+            currentZoom = 1;
+            applyTransform();
+        }
+
+        function applyTransform() {
+            mermaidPre.style.transform = `scale(${currentZoom})`;
+            mermaidPre.style.transformOrigin = 'center top';
+        }
+
+        // Section Highlighting
+        const sections = document.querySelectorAll('section');
+        const navLinks = document.querySelectorAll('.nav-links a');
+
+        window.addEventListener('scroll', () => {
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                const sectionHeight = section.clientHeight;
+                if (pageYOffset >= sectionTop - 100) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            navLinks.forEach(a => {
+                a.classList.remove('active');
+                if (a.getAttribute('href').includes(current)) {
+                    a.classList.add('active');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
