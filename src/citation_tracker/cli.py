@@ -627,15 +627,26 @@ def _process_paper(
 
     # ── 5. REPORT ──────────────────────────────────────────────────────────
     from citation_tracker.db import list_analyses
+    from citation_tracker.analyser import generate_executive_synthesis
 
     with get_conn(db_path) as conn:
-        analyses = list_analyses(conn, tracked_id)
+        analyses_rows = list_analyses(conn, tracked_id)
         failed_pdfs = conn.execute(
             "SELECT * FROM citing_papers WHERE tracked_paper_id=? AND pdf_status='failed'",
             (tracked_id,),
         ).fetchall()
 
-    section = (paper, analyses, failed_pdfs)
+    analyses_dicts = [dict(a) for a in analyses_rows]
+    executive_synthesis = None
+    if analyses_dicts:
+        try:
+            console.print("  Generating executive synthesis...")
+            executive_synthesis = generate_executive_synthesis(paper, analyses_dicts, cfg)
+        except Exception as exc:
+            errors.append(f"Synthesis failed: {exc}")
+            logger.warning("Synthesis failed: %s", exc)
+
+    section = (paper, analyses_rows, failed_pdfs, executive_synthesis)
     return new_papers, papers_analysed, errors, section
 
 
@@ -805,5 +816,15 @@ def show(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
             (paper["id"],),
         ).fetchall()
 
-    report = build_report(paper, analyses, failed_pdfs)
+    from citation_tracker.analyser import generate_executive_synthesis
+    executive_synthesis = None
+    if analyses:
+        try:
+            console.print("  Generating executive synthesis...")
+            analyses_dicts = [dict(a) for a in analyses]
+            executive_synthesis = generate_executive_synthesis(dict(paper), analyses_dicts, cfg)
+        except Exception as exc:
+            console.print(f"[yellow]Warning: synthesis failed: {exc}[/yellow]")
+
+    report = build_report(paper, analyses, failed_pdfs, executive_synthesis)
     _print_markdown(report)

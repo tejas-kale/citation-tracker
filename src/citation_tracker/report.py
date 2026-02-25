@@ -11,55 +11,11 @@ def _format_authors(authors: str | None) -> str:
     return authors or "Unknown authors"
 
 
-def _build_influence_graph(
-    tracked_title: str,
-    analyses: list[sqlite3.Row],
-) -> str:
-    # Helper to wrap text for mermaid nodes
-    def wrap_text(text: str, width: int = 40) -> str:
-        import textwrap
-        return "<br/>".join(textwrap.wrap(text, width))
-
-    lines = ["```mermaid", "graph TD", '  T["' + wrap_text("Tracked: " + tracked_title) + '"]']
-    
-    # Group analyses by relationship type
-    categories: dict[str, list[sqlite3.Row]] = {}
-    for a in analyses:
-        rel = a["relationship_type"] or "neutral"
-        categories.setdefault(rel, []).append(a)
-
-    for rel, papers in categories.items():
-        rel_node = f"REL_{rel.upper()}"
-        lines.append(f'  {rel_node}[["{rel.upper()}"]]')
-        lines.append(f"  T --- {rel_node}")
-        
-        prev_node_id = None
-        for idx, a in enumerate(papers):
-            node_id = f"P_{hash(a['id']) % 10000}"
-            title = wrap_text(a["citing_title"] or "Untitled", width=50)
-            doi = a["citing_doi"] or "No DOI"
-            # Get one line summary
-            summary = wrap_text((a["summary"] or "").split(".")[0], width=60)[:150] + "..."
-            
-            label = f'"{title}<br/><i>{doi}</i><br/><small>{summary}</small>"'
-            lines.append(f"    {node_id}[{label}]")
-            lines.append(f"    {rel_node} --> {node_id}")
-            
-            # Invisible edge to force vertical stacking
-            if prev_node_id:
-                lines.append(f"    {prev_node_id} ~~~ {node_id}")
-            prev_node_id = node_id
-        
-    lines.append("  linkStyle default stroke:#cbd5e0,stroke-width:2px,fill:none")
-    lines.append("  style T fill:#edf2f7,stroke:#2d3748,stroke-width:2px")
-    lines.append("```")
-    return "\n".join(lines)
-
-
 def build_report(
     tracked_paper: sqlite3.Row,
     analyses: list[sqlite3.Row],
     failed_pdfs: list[sqlite3.Row],
+    executive_synthesis: str | None = None,
 ) -> str:
     """
     Build a Markdown report for a single tracked paper.
@@ -83,12 +39,13 @@ def build_report(
         lines.append(f"*Source URL: {tracked_paper['source_url']}*  ")
     lines.append(f"\n*Generated: {now}*\n")
 
+    if executive_synthesis:
+        lines.append("## Executive Synthesis\n")
+        lines.append(f"{executive_synthesis}\n")
+        lines.append("---\n")
+
     if analyses:
-        lines.append(f"## New Citing Papers ({len(analyses)} analysed)\n")
-        lines.append("<details>\n<summary><b>View Influence Tree (Categorized Chart)</b></summary>\n")
-        lines.append(_build_influence_graph(title, analyses))
-        lines.append("</details>\n")
-        lines.append("")
+        lines.append(f"## Individual Citing Papers ({len(analyses)} analysed)\n")
         for a in analyses:
             lines.append(f"### {a['citing_title'] or 'Untitled'}")
             lines.append(
@@ -123,12 +80,12 @@ def build_report(
 
 
 def build_full_report(
-    sections: list[tuple[sqlite3.Row, list[sqlite3.Row], list[sqlite3.Row]]],
+    sections: list[tuple[sqlite3.Row, list[sqlite3.Row], list[sqlite3.Row], str | None]],
 ) -> str:
     """Build a combined report for multiple tracked papers."""
     if not sections:
         return "# Citation Tracker Report\n\nNo data to report.\n"
-    parts = [build_report(tp, analyses, failed) for tp, analyses, failed in sections]
+    parts = [build_report(tp, analyses, failed, synth) for tp, analyses, failed, synth in sections]
     return "\n\n---\n\n".join(parts)
 
 
@@ -141,32 +98,12 @@ def render_full_report_html(markdown_content: str) -> str:
 
     html_body = markdown.markdown(markdown_content, extensions=["extra", "toc"])
 
-    # Mermaid JS requires the graph to be inside a div with class "mermaid"
-    # We replace the markdown-generated <pre><code class="language-mermaid">...</code></pre> 
-    # with the simple <div class="mermaid">...</div>
-    import re
-    html_body = re.sub(
-        r'<pre><code class="language-mermaid">(.*?)</code></pre>',
-        r'<div class="mermaid">\1</div>',
-        html_body,
-        flags=re.DOTALL
-    )
-
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Citation Tracker Report</title>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-    <script>
-        mermaid.initialize({{ 
-            startOnLoad: true,
-            securityLevel: 'loose',
-            theme: 'neutral',
-            flowchart: {{ useMaxWidth: false, htmlLabels: true }}
-        }});
-    </script>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -189,27 +126,6 @@ def render_full_report_html(markdown_content: str) -> str:
         code {{ background: #f4f4f4; padding: 2px 4px; border-radius: 4px; }}
         hr {{ border: 0; border-top: 2px solid #eee; margin: 40px 0; }}
         .metadata {{ color: #666; font-style: italic; }}
-        .mermaid {{ 
-            width: 100% !important; 
-            max-width: 100% !important;
-            min-height: 600px;
-            margin: 20px 0;
-            background: #fff;
-            padding: 20px;
-            border: 1px solid #eee;
-            border-radius: 8px;
-        }}
-        details {{
-            margin: 20px 0;
-            padding: 15px;
-            background: #f0f4f8;
-            border-radius: 8px;
-            cursor: pointer;
-        }}
-        summary {{
-            font-size: 1.1rem;
-            color: #2c5282;
-        }}
     </style>
 </head>
 <body>

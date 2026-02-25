@@ -140,6 +140,55 @@ def analyse_citing_paper(
     return backend_fn(prompt)
 
 
+def generate_executive_synthesis(
+    tracked_paper: dict[str, Any],
+    analyses: list[dict[str, Any]],
+    config: Config
+) -> str:
+    """Generate a high-level academic synthesis of all citation engagement."""
+    if not analyses:
+        return "No citations available for synthesis."
+
+    backend_fn = _get_backend(config)
+    
+    # Prepare a condensed version of all analyses for the prompt
+    summaries = []
+    for a in analyses:
+        summaries.append(
+            f"Title: {a.get('citing_title')}\n"
+            f"Relationship: {a.get('relationship_type')}\n"
+            f"Summary: {a.get('summary')}\n"
+            f"New Evidence: {a.get('new_evidence')}\n"
+            f"Challenges/Flaws: {a.get('flaws_identified') or a.get('assumptions_questioned')}\n"
+        )
+    
+    all_summaries = "\n---\n".join(summaries)
+
+    prompt = f"""\
+You are a senior academic advisor and research lead. Your task is to provide a sophisticated executive synthesis of how the research community is engaging with the following paper.
+
+TRACKED PAPER:
+Title: {tracked_paper.get('title')}
+Abstract: {tracked_paper.get('abstract')}
+
+CITING ANALYSES:
+{all_summaries}
+
+INSTRUCTIONS:
+Write a 3-4 paragraph "Executive Synthesis" for a tenured professor. 
+Focus on:
+1. The broader trajectory of the research field as influenced by the tracked paper.
+2. Major thematic clusters of engagement (e.g., extensions into new environments, theoretical refinements, or methodological shifts).
+3. Critical discourse: identify if the community is confirming, extending, or beginning to challenge the core findings.
+4. High-level impact assessment: how has the paper shifted the 'state of the art' in its specific niche?
+
+Use rigorous academic tone. Do not list individual papers; synthesize the collective findings into a narrative.
+Return raw Markdown.
+"""
+    # Use the text-only caller to get a raw narrative
+    return _call_llm_text(prompt, config)
+
+
 def parse_paper_metadata(text: str, config: Config) -> dict[str, Any]:
     """Extract paper metadata (title, authors, year, abstract, DOI) from PDF text using LLM."""
     backend_fn = _get_backend(config)
