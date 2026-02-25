@@ -184,6 +184,15 @@ def _resolve_paper(
             try:
                 console.print(f"  API search failed. Extracting metadata from PDF using LLM...")
                 extracted = parse_paper_metadata(pdf_text, cfg)
+                
+                # If LLM found a DOI, try to re-resolve using the DOI to get official IDs
+                if extracted.get("doi"):
+                    console.print(f"  LLM extracted DOI: {extracted['doi']}. Re-resolving...")
+                    official = _resolve_paper(url=None, doi=extracted["doi"], ss_id=None, cfg=cfg)
+                    if official:
+                        official["source_url"] = url
+                        return official
+
                 paper = {
                     "doi": extracted.get("doi"),
                     "title": extracted.get("title") or title_guess,

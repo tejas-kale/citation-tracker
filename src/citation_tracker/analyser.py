@@ -141,14 +141,15 @@ def analyse_citing_paper(
 
 
 def parse_paper_metadata(text: str, config: Config) -> dict[str, Any]:
-    """Extract paper metadata (title, authors, year, abstract) from PDF text using LLM."""
+    """Extract paper metadata (title, authors, year, abstract, DOI) from PDF text using LLM."""
     backend_fn = _get_backend(config)
 
     prompt = f"""\
 Extract the metadata for this academic paper from its text.
-Return a JSON object with these fields: title, authors, year, abstract.
+Return a JSON object with these fields: title, authors, year, abstract, doi.
 If a field is unknown, use null.
 The 'authors' field should be a comma-separated string.
+For 'doi', look for a string starting with '10.' (e.g., 10.1051/0004-6361/202450011).
 
 TEXT:
 {text[:4000]}

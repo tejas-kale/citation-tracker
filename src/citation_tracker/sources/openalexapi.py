@@ -40,10 +40,16 @@ def _work_to_dict(w: dict[str, Any]) -> dict[str, Any]:
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def _get(url: str, params: dict[str, Any]) -> Any:
-    with httpx.Client(timeout=30) as client:
-        resp = client.get(url, params=params)
-        resp.raise_for_status()
-        return resp.json()
+    try:
+        with httpx.Client(timeout=30) as client:
+            resp = client.get(url, params=params)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 429:
+            logger.warning("OpenAlex rate limit (429) hit for %s", url)
+            raise
+        raise
 
 
 def search_paper_by_title(title: str) -> dict[str, Any] | None:
@@ -53,59 +59,69 @@ def search_paper_by_title(title: str) -> dict[str, Any] | None:
 
 def search_paper_by_query(query: str) -> dict[str, Any] | None:
     """Search OpenAlex with a general query string."""
-    data = _get(
-        f"{OA_BASE}/works",
-        {"search": query, "per_page": 1},
-    )
-    results = data.get("results") or []
-    if not results:
+    from tenacity import RetryError
+    try:
+        data = _get(
+            f"{OA_BASE}/works",
+            {"search": query, "per_page": 1},
+        )
+        results = data.get("results") or []
+        if not results:
+            return None
+        return _work_to_dict(results[0])
+    except (RetryError, httpx.HTTPStatusError) as exc:
+        logger.warning("OpenAlex query failed: %s", exc)
         return None
-    return _work_to_dict(results[0])
 
 
 def get_paper_by_doi(doi: str) -> dict[str, Any] | None:
     """Fetch paper metadata from OpenAlex by DOI."""
+    from tenacity import RetryError
     try:
         data = _get(f"{OA_BASE}/works/doi:{quote(doi, safe='')}", {})
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            return None
-        raise
-    return _work_to_dict(data)
+        return _work_to_dict(data)
+    except (RetryError, httpx.HTTPStatusError) as exc:
+        logger.warning("OpenAlex get_doi failed: %s", exc)
+        return None
 
 
 def get_paper_by_arxiv(arxiv_id: str) -> dict[str, Any] | None:
     """Fetch paper metadata from OpenAlex by arXiv ID."""
+    from tenacity import RetryError
     try:
         data = _get(f"{OA_BASE}/works", {"filter": f"ids.arxiv:{arxiv_id}"})
         results = data.get("results") or []
         if not results:
             return None
         return _work_to_dict(results[0])
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            return None
-        raise
+    except (RetryError, httpx.HTTPStatusError) as exc:
+        logger.warning("OpenAlex get_arxiv failed: %s", exc)
+        return None
 
 
 def get_citations(oa_id: str, max_results: int = 500) -> list[dict[str, Any]]:
     """Fetch papers citing the given OpenAlex work ID."""
+    from tenacity import RetryError
     results: list[dict[str, Any]] = []
     page = 1
     per_page = 100
     while len(results) < max_results:
-        data = _get(
-            f"{OA_BASE}/works",
-            {
-                "filter": f"cites:{oa_id}",
-                "per_page": per_page,
-                "page": page,
-                "select": "id,doi,display_name,publication_year,authorships,best_oa_location",
-            },
-        )
-        items = data.get("results") or []
-        results.extend(_work_to_dict(w) for w in items)
-        if len(items) < per_page:
+        try:
+            data = _get(
+                f"{OA_BASE}/works",
+                {
+                    "filter": f"cites:{oa_id}",
+                    "per_page": per_page,
+                    "page": page,
+                    "select": "id,doi,display_name,publication_year,authorships,best_oa_location",
+                },
+            )
+            items = data.get("results") or []
+            results.extend(_work_to_dict(w) for w in items)
+            if len(items) < per_page:
+                break
+            page += 1
+        except (RetryError, httpx.HTTPStatusError) as exc:
+            logger.warning("OpenAlex get_citations failed: %s", exc)
             break
-        page += 1
     return results[:max_results]
