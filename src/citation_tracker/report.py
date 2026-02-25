@@ -15,7 +15,7 @@ def _build_influence_graph(
     tracked_title: str,
     analyses: list[sqlite3.Row],
 ) -> str:
-    lines = ["```mermaid", "graph LR", '  T["Tracked: ' + tracked_title.replace('"', '\\"') + '"]']
+    lines = ["```mermaid", "graph TD", '  T["Tracked: ' + tracked_title.replace('"', '\\"') + '"]']
     
     # Group analyses by relationship type
     categories: dict[str, list[sqlite3.Row]] = {}
@@ -24,7 +24,9 @@ def _build_influence_graph(
         categories.setdefault(rel, []).append(a)
 
     for rel, papers in categories.items():
-        lines.append(f"  subgraph {rel.upper()}")
+        rel_node = f"REL_{rel.upper()}"
+        lines.append(f'  {rel_node}[["{rel.upper()}"]]')
+        lines.append(f"  T --- {rel_node}")
         for idx, a in enumerate(papers):
             # Unique ID for node
             node_id = f"P_{hash(a['id']) % 10000}"
@@ -35,9 +37,10 @@ def _build_influence_graph(
             
             label = f'"{title}<br/><i>{doi}</i><br/><small>{summary}</small>"'
             lines.append(f"    {node_id}[{label}]")
-            lines.append(f"    T -->|{rel}| {node_id}")
-        lines.append("  end")
+            lines.append(f"    {rel_node} --> {node_id}")
         
+    lines.append("  linkStyle default stroke:#cbd5e0,stroke-width:2px,fill:none")
+    lines.append("  style T fill:#edf2f7,stroke:#2d3748,stroke-width:2px")
     lines.append("```")
     return "\n".join(lines)
 
