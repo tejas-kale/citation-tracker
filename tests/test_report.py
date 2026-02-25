@@ -16,6 +16,7 @@ def mock_tracked_paper():
 def mock_analyses():
     return [
         {
+            "id": "analysis1",
             "citing_title": "Citing A",
             "citing_authors": "Author A",
             "citing_year": 2021,
@@ -35,7 +36,7 @@ def test_build_report(mock_tracked_paper, mock_analyses):
     assert "*Author 1*" in report
     assert "Source URL: https://example.com/main.pdf" in report
     assert "```mermaid" in report
-    assert "T -->|supports| C1" in report
+    assert "REL_SUPPORTS" in report
     assert "### Citing A" in report
     assert "**Relationship:** `supports`" in report
 
