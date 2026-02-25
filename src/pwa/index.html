@@ -3,74 +3,151 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#0f172a" />
+  <meta name="theme-color" content="#6750a4" />
   <title>Citation Tracker PWA</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <style>
-    body { font-family: system-ui, sans-serif; margin: 0; background: #f8fafc; color: #0f172a; }
-    main { max-width: 900px; margin: 2rem auto; background: #fff; padding: 1rem; border-radius: 8px; }
-    label { display: block; font-weight: 600; margin-top: 0.75rem; }
-    textarea, input { width: 100%; box-sizing: border-box; margin-top: 0.25rem; padding: 0.5rem; }
-    button { margin-top: 1rem; padding: 0.6rem 1rem; }
-    pre { background: #0f172a; color: #e2e8f0; padding: 0.75rem; overflow: auto; }
+    :root {
+      --md-sys-color-primary: #6750a4;
+      --md-sys-color-surface: #fffbfe;
+      --md-sys-color-surface-variant: #e7e0ec;
+      --md-sys-color-on-surface: #1d1b20;
+      --md-sys-color-outline: #79747e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Roboto, "Segoe UI", system-ui, sans-serif;
+      background: var(--md-sys-color-surface-variant);
+      color: var(--md-sys-color-on-surface);
+    }
+    .app {
+      max-width: 560px;
+      margin: 24px auto;
+      padding: 0 12px;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    h1 { font-size: 1.3rem; margin: 0; font-weight: 500; }
+    .icon-btn {
+      border: none;
+      border-radius: 999px;
+      width: 40px;
+      height: 40px;
+      background: var(--md-sys-color-surface);
+      color: var(--md-sys-color-primary);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      cursor: pointer;
+      font-size: 1.1rem;
+    }
+    .card {
+      background: var(--md-sys-color-surface);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .settings {
+      display: none;
+      margin-bottom: 12px;
+      border: 1px solid var(--md-sys-color-surface-variant);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fff;
+    }
+    .settings.open { display: block; }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: #49454f;
+      margin-bottom: 6px;
+    }
+    input {
+      width: 100%;
+      border: 1px solid var(--md-sys-color-outline);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font: inherit;
+      margin-bottom: 12px;
+      background: #fff;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .go-btn {
+      border: none;
+      border-radius: 20px;
+      padding: 9px 16px;
+      background: var(--md-sys-color-primary);
+      color: #fff;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    pre {
+      margin: 12px 0 0;
+      border-radius: 8px;
+      background: #1d1b20;
+      color: #e8def8;
+      padding: 10px;
+      min-height: 72px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Citation Tracker (Fresh Run)</h1>
-    <p>No persistence: every run uses values currently entered on this page.</p>
-    <label>OpenRouter API key<input id="apiKey" type="password" autocomplete="off" /></label>
-    <label>Model<input id="model" value="minimax/minimax-m2.5" /></label>
-    <label>Tracked paper title<input id="trackedTitle" /></label>
-    <label>Tracked paper authors<input id="trackedAuthors" /></label>
-    <label>Tracked paper abstract<textarea id="trackedAbstract" rows="3"></textarea></label>
-    <label>Citing paper title<input id="citingTitle" /></label>
-    <label>Citing paper text<textarea id="citingText" rows="10"></textarea></label>
-    <button id="runBtn">Run Analysis</button>
-    <pre id="output">Waiting for input…</pre>
+  <main class="app">
+    <div class="topbar">
+      <h1>Citation Tracker</h1>
+      <button id="settingsBtn" class="icon-btn" aria-label="Settings">⚙</button>
+    </div>
+    <section class="card">
+      <div id="settingsPanel" class="settings">
+        <label for="apiKey">OpenRouter API Key</label>
+        <input id="apiKey" type="password" autocomplete="off" placeholder="sk-or-..." />
+      </div>
+      <label for="paperUrl">Paper URL</label>
+      <div class="row">
+        <input id="paperUrl" type="url" placeholder="https://arxiv.org/abs/..." />
+        <button id="goBtn" class="go-btn">Go</button>
+      </div>
+      <pre id="output">Enter a URL, open Settings to set your key, then press Go.</pre>
+    </section>
   </main>
   <script>
-    const promptTemplate = ({ trackedTitle, trackedAuthors, trackedAbstract, citingTitle, citingText }) => `CONTEXT — ORIGINAL PAPER
-Title: ${trackedTitle}
-Authors: ${trackedAuthors}
-Abstract: ${trackedAbstract}
+    const settingsPanel = document.getElementById("settingsPanel");
+    document.getElementById("settingsBtn").addEventListener("click", () => {
+      settingsPanel.classList.toggle("open");
+    });
 
-CITING PAPER
-Title: ${citingTitle}
-Full text (Markdown):
-${citingText}
-
-TASK
-Analyse how this citing paper engages with the original paper above.
-Return a JSON object with exactly these fields:
-{
-  "summary": "2–3 sentence overview of the citing paper's argument",
-  "relationship_type": "one of: supports | challenges | extends | uses | neutral",
-  "new_evidence": "any new empirical or theoretical evidence introduced, or null",
-  "flaws_identified": "any flaws or limitations of the original paper raised, or null",
-  "assumptions_questioned": "any assumptions of the original paper challenged, or null",
-  "other_notes": "anything else notable about how this paper engages, or null"
-}
-Return only valid JSON. No preamble.`;
-
-    document.getElementById("runBtn").addEventListener("click", async () => {
+    document.getElementById("goBtn").addEventListener("click", async () => {
       const output = document.getElementById("output");
-      output.textContent = "Running…";
       const apiKey = document.getElementById("apiKey").value.trim();
+      const paperUrl = document.getElementById("paperUrl").value.trim();
       if (!apiKey) {
-        output.textContent = "Please enter an OpenRouter API key.";
+        output.textContent = "Open Settings and add your OpenRouter API key.";
         return;
       }
+      if (!paperUrl) {
+        output.textContent = "Enter a paper URL.";
+        return;
+      }
+      output.textContent = "Running…";
       try {
         const body = {
-          model: document.getElementById("model").value.trim(),
-          messages: [{ role: "user", content: promptTemplate({
-            trackedTitle: document.getElementById("trackedTitle").value.trim(),
-            trackedAuthors: document.getElementById("trackedAuthors").value.trim(),
-            trackedAbstract: document.getElementById("trackedAbstract").value.trim(),
-            citingTitle: document.getElementById("citingTitle").value.trim(),
-            citingText: document.getElementById("citingText").value.trim(),
-          }) }],
+          model: "minimax/minimax-m2.5",
+          messages: [{
+            role: "user",
+            content:
+              "You are an academic paper tracker assistant. A user wants to track this paper URL: " +
+              paperUrl +
+              ". Return JSON with fields title, doi, source, notes. Keep notes to 2 short bullets."
+          }],
           temperature: 0.1
         };
         const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {

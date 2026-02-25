@@ -85,7 +85,7 @@ Reports now include a Mermaid influence tree graph per tracked paper.
 
 ### Simple PWA (fresh run, no persistence)
 
-Open `src/pwa/index.html` in a browser (or serve `src/pwa/` with any static file server) to run one-off OpenRouter analyses from a minimal installable web app.
+Open `src/pwa/index.html` in a browser (or serve `src/pwa/` with any static file server) to use a very simple one-off web app: set OpenRouter API key in Settings, enter one paper URL, and press Go.
 This app is deployed to GitHub Pages via `.github/workflows/pages.yml` (on pushes to `main`).
 
 ## Configuration
