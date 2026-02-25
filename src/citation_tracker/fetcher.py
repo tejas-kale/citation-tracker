@@ -77,6 +77,15 @@ def try_download_citing_paper(
         path = _try_unpaywall(doi, pdfs_dir, email=email)
         if path:
             return path
+        path = _try_crossref(doi, pdfs_dir)
+        if path:
+            return path
+
+    arxiv_id = paper.get("arxiv_id") or _doi_to_arxiv_id(doi or "")
+    if arxiv_id:
+        path = _try_arxiv(arxiv_id, pdfs_dir, doi=doi)
+        if path:
+            return path
 
     return None
 
@@ -96,6 +105,41 @@ def _try_unpaywall(doi: str, pdfs_dir: Path, email: str = "citation-tracker@exam
     except Exception as exc:
         logger.debug("Unpaywall lookup failed for %s: %s", doi, exc)
     return None
+
+
+def _try_crossref(doi: str, pdfs_dir: Path) -> Path | None:
+    """Try to get a PDF URL via Crossref links metadata."""
+    try:
+        url = f"https://api.crossref.org/works/{doi}"
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(url, headers=_HEADERS)
+            resp.raise_for_status()
+            data = resp.json().get("message") or {}
+        for link in data.get("link") or []:
+            if (link.get("content-type") or "").lower() == "application/pdf" and link.get("URL"):
+                return download_pdf(link["URL"], pdfs_dir, doi=doi)
+    except Exception as exc:
+        logger.debug("Crossref lookup failed for %s: %s", doi, exc)
+    return None
+
+
+def _doi_to_arxiv_id(doi: str) -> str | None:
+    """Extract arXiv ID from DOI style 10.48550/arXiv.XXXX."""
+    if not doi:
+        return None
+    lowered = doi.lower()
+    marker = "10.48550/arxiv."
+    if lowered.startswith(marker):
+        return doi[len(marker):]
+    return None
+
+
+def _try_arxiv(arxiv_id: str, pdfs_dir: Path, doi: str | None = None) -> Path | None:
+    """Try direct arXiv PDF URL for known arXiv IDs."""
+    if not arxiv_id:
+        return None
+    pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+    return download_pdf(pdf_url, pdfs_dir, doi=doi, filename_hint=arxiv_id)
 
 
 def scan_manual_dir(manual_dir: Path) -> list[Path]:

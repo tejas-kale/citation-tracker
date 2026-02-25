@@ -11,6 +11,21 @@ def _format_authors(authors: str | None) -> str:
     return authors or "Unknown authors"
 
 
+def _influence_tree_mermaid(tracked_title: str, analyses: list[sqlite3.Row]) -> str:
+    if not analyses:
+        return ""
+    safe_tracked_title = tracked_title.replace('"', "'")
+    lines = ["```mermaid", "graph TD", f'  TP["{safe_tracked_title}"]']
+    for idx, a in enumerate(analyses, start=1):
+        node = f"C{idx}"
+        title = (a["citing_title"] or "Untitled").replace('"', "'")
+        relationship = (a["relationship_type"] or "neutral").replace('"', "'")
+        lines.append(f'  {node}["{title}"]')
+        lines.append(f"  TP -->|{relationship}| {node}")
+    lines.append("```")
+    return "\n".join(lines)
+
+
 def build_report(
     tracked_paper: sqlite3.Row,
     analyses: list[sqlite3.Row],
@@ -37,6 +52,9 @@ def build_report(
     lines.append(f"\n*Generated: {now}*\n")
 
     if analyses:
+        lines.append("## Influence Tree\n")
+        lines.append(_influence_tree_mermaid(title, analyses))
+        lines.append("")
         lines.append(f"## New Citing Papers ({len(analyses)} analysed)\n")
         for a in analyses:
             lines.append(f"### {a['citing_title'] or 'Untitled'}")

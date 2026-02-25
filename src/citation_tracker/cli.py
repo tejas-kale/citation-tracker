@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from citation_tracker.config import load_config
 
 console = Console()
 logger = logging.getLogger(__name__)
+_MAX_RUN_WORKERS = 8
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -417,14 +419,30 @@ def _process_paper(
     with get_conn(db_path) as conn:
         pending = get_citing_papers_pending_pdf(conn, tracked_id)
 
-    for cp in pending:
-        cp_dict = dict(cp)
-        path = try_download_citing_paper(cp_dict, cfg.pdfs_dir, email=cfg.unpaywall_email or "citation-tracker@example.com")
-        with get_conn(db_path) as conn:
-            if path:
-                update_citing_paper_pdf(conn, cp["id"], "downloaded")
-            else:
-                update_citing_paper_pdf(conn, cp["id"], "failed")
+    if pending:
+        with ThreadPoolExecutor(max_workers=min(_MAX_RUN_WORKERS, len(pending))) as executor:
+            futures = {
+                executor.submit(
+                    try_download_citing_paper,
+                    dict(cp),
+                    cfg.pdfs_dir,
+                    cfg.unpaywall_email or "citation-tracker@example.com",
+                ): cp["id"]
+                for cp in pending
+            }
+            for future in as_completed(futures):
+                citing_id = futures[future]
+                try:
+                    path = future.result()
+                except Exception as exc:
+                    errors.append(f"Fetch failed for citing paper id={citing_id}: {exc}")
+                    logger.warning("Fetch failed: %s", exc)
+                    path = None
+                with get_conn(db_path) as conn:
+                    if path:
+                        update_citing_paper_pdf(conn, citing_id, "downloaded")
+                    else:
+                        update_citing_paper_pdf(conn, citing_id, "failed")
 
     # Check manual dir
     for manual_pdf in scan_manual_dir(cfg.manual_dir):
@@ -440,52 +458,73 @@ def _process_paper(
             (tracked_id,),
         ).fetchall()
 
+    from citation_tracker.fetcher import _doi_to_path
+    parse_jobs: list[tuple[str, Path]] = []
     for cp in downloaded:
-        from citation_tracker.fetcher import _doi_to_path
         doi_safe = _doi_to_path(cp["doi"]) if cp["doi"] else "unknown"
         pdf_path = cfg.pdfs_dir / doi_safe / "paper.pdf"
-        if not pdf_path.exists():
-            continue
-        text = extract_text(pdf_path)
-        if text:
-            with get_conn(db_path) as conn:
-                update_citing_paper_text(conn, cp["id"], text)
+        if pdf_path.exists():
+            parse_jobs.append((cp["id"], pdf_path))
+    if parse_jobs:
+        with ThreadPoolExecutor(max_workers=min(_MAX_RUN_WORKERS, len(parse_jobs))) as executor:
+            futures = {
+                executor.submit(extract_text, pdf_path): citing_id
+                for citing_id, pdf_path in parse_jobs
+            }
+            for future in as_completed(futures):
+                try:
+                    text = future.result()
+                except Exception as exc:
+                    errors.append(f"Parse failed for citing paper id={futures[future]}: {exc}")
+                    logger.warning("Parse failed: %s", exc)
+                    text = None
+                if text:
+                    with get_conn(db_path) as conn:
+                        update_citing_paper_text(conn, futures[future], text)
 
     # ── 4. ANALYSE ─────────────────────────────────────────────────────────
     with get_conn(db_path) as conn:
         to_analyse = get_citing_papers_for_analysis(conn, tracked_id)
 
     papers_analysed = 0
-    for cp in to_analyse:
-        try:
-            result = analyse_citing_paper(
-                tracked_paper=paper,
-                citing_paper=dict(cp),
-                extracted_text=cp["extracted_text"] or "",
-                config=cfg,
-            )
-            import json
+    if to_analyse:
+        with ThreadPoolExecutor(max_workers=min(_MAX_RUN_WORKERS, len(to_analyse))) as executor:
+            futures = {
+                executor.submit(
+                    analyse_citing_paper,
+                    tracked_paper=paper,
+                    citing_paper=dict(cp),
+                    extracted_text=cp["extracted_text"] or "",
+                    config=cfg,
+                ): cp
+                for cp in to_analyse
+            }
+            for future in as_completed(futures):
+                cp = futures[future]
+                try:
+                    result = future.result()
+                    import json
 
-            with get_conn(db_path) as conn:
-                insert_analysis(
-                    conn,
-                    {
-                        "citing_paper_id": cp["id"],
-                        "tracked_paper_id": tracked_id,
-                        "backend_used": cfg.backend,
-                        "summary": result.get("summary"),
-                        "relationship_type": result.get("relationship_type"),
-                        "new_evidence": result.get("new_evidence"),
-                        "flaws_identified": result.get("flaws_identified"),
-                        "assumptions_questioned": result.get("assumptions_questioned"),
-                        "other_notes": result.get("other_notes"),
-                        "raw_response": json.dumps(result),
-                    },
-                )
-            papers_analysed += 1
-        except Exception as exc:
-            errors.append(f"Analysis failed for citing paper id={cp['id']}: {exc}")
-            logger.warning("Analysis failed: %s", exc)
+                    with get_conn(db_path) as conn:
+                        insert_analysis(
+                            conn,
+                            {
+                                "citing_paper_id": cp["id"],
+                                "tracked_paper_id": tracked_id,
+                                "backend_used": cfg.backend,
+                                "summary": result.get("summary"),
+                                "relationship_type": result.get("relationship_type"),
+                                "new_evidence": result.get("new_evidence"),
+                                "flaws_identified": result.get("flaws_identified"),
+                                "assumptions_questioned": result.get("assumptions_questioned"),
+                                "other_notes": result.get("other_notes"),
+                                "raw_response": json.dumps(result),
+                            },
+                        )
+                    papers_analysed += 1
+                except Exception as exc:
+                    errors.append(f"Analysis failed for citing paper id={cp['id']}: {exc}")
+                    logger.warning("Analysis failed: %s", exc)
 
     # ── 5. REPORT ──────────────────────────────────────────────────────────
     from citation_tracker.db import list_analyses
@@ -669,3 +708,13 @@ def show(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
 
     report = build_report(paper, analyses, failed_pdfs)
     _print_markdown(report)
+
+
+@main.command("pwa")
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8765, show_default=True, type=int)
+def pwa(host: str, port: int) -> None:
+    """Run a local fresh-run PWA interface."""
+    from citation_tracker.pwa import serve
+
+    serve(host=host, port=port)

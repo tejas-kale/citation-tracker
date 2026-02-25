@@ -81,6 +81,15 @@ citation-tracker show --id <ID>
 ```
 
 Reports are automatically generated as HTML files in `~/.citation-tracker/reports/` after each `run`.
+Reports now also include a Mermaid influence tree for each tracked paper.
+
+### Run the local PWA (fresh run per request)
+
+```bash
+citation-tracker pwa --host 127.0.0.1 --port 8765
+```
+
+Open `http://127.0.0.1:8765`, provide a DOI and OpenRouter key, and run a non-persistent analysis.
 
 ## Configuration
 
