@@ -39,6 +39,7 @@ def init_db(db_path: Path) -> None:
                 source_url  TEXT,
                 ss_id       TEXT,
                 oa_id       TEXT,
+                ads_bibcode TEXT,
                 added_at    TEXT NOT NULL,
                 active      INTEGER NOT NULL DEFAULT 1
             );
@@ -53,6 +54,7 @@ def init_db(db_path: Path) -> None:
                 abstract            TEXT,
                 ss_id               TEXT,
                 oa_id               TEXT,
+                ads_bibcode         TEXT,
                 pdf_url             TEXT,
                 pdf_status          TEXT NOT NULL DEFAULT 'pending',
                 extracted_text      TEXT,
@@ -112,9 +114,9 @@ def insert_tracked_paper(conn: sqlite3.Connection, paper: dict[str, Any]) -> str
     conn.execute(
         """
         INSERT INTO tracked_papers
-            (id, doi, title, authors, year, abstract, source_url, ss_id, oa_id, added_at, active)
+            (id, doi, title, authors, year, abstract, source_url, ss_id, oa_id, ads_bibcode, added_at, active)
         VALUES
-            (:id, :doi, :title, :authors, :year, :abstract, :source_url, :ss_id, :oa_id, :added_at, 1)
+            (:id, :doi, :title, :authors, :year, :abstract, :source_url, :ss_id, :oa_id, :ads_bibcode, :added_at, 1)
         """,
         {
             "id": paper_id,
@@ -126,6 +128,7 @@ def insert_tracked_paper(conn: sqlite3.Connection, paper: dict[str, Any]) -> str
             "source_url": paper.get("source_url"),
             "ss_id": paper.get("ss_id"),
             "oa_id": paper.get("oa_id"),
+            "ads_bibcode": paper.get("ads_bibcode"),
             "added_at": _now(),
         },
     )
@@ -211,10 +214,10 @@ def upsert_citing_paper(
         """
         INSERT INTO citing_papers
             (id, tracked_paper_id, doi, title, authors, year, abstract,
-             ss_id, oa_id, pdf_url, pdf_status, created_at)
+             ss_id, oa_id, ads_bibcode, pdf_url, pdf_status, created_at)
         VALUES
             (:id, :tracked_paper_id, :doi, :title, :authors, :year, :abstract,
-             :ss_id, :oa_id, :pdf_url, 'pending', :created_at)
+             :ss_id, :oa_id, :ads_bibcode, :pdf_url, 'pending', :created_at)
         """,
         {
             "id": paper_id,
@@ -226,6 +229,7 @@ def upsert_citing_paper(
             "abstract": paper.get("abstract"),
             "ss_id": paper.get("ss_id"),
             "oa_id": paper.get("oa_id"),
+            "ads_bibcode": paper.get("ads_bibcode"),
             "pdf_url": paper.get("pdf_url"),
             "created_at": _now(),
         },

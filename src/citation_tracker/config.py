@@ -22,9 +22,19 @@ class OpenRouterConfig:
 
 
 @dataclass
+class ADSConfig:
+    api_key_env: str = "ADS_DEV_KEY"
+
+    @property
+    def api_key(self) -> str:
+        return os.environ.get(self.api_key_env, "")
+
+
+@dataclass
 class Config:
     backend: str = "openrouter"
     openrouter: OpenRouterConfig = field(default_factory=OpenRouterConfig)
+    ads: ADSConfig = field(default_factory=ADSConfig)
     data_dir: Path = field(default_factory=lambda: Path.home() / ".citation-tracker")
     unpaywall_email: str = ""
 
@@ -68,6 +78,12 @@ def load_config(config_path: Path | None = None, env_path: Path | None = None) -
             config.openrouter = OpenRouterConfig(
                 model=or_raw.get("model", config.openrouter.model),
                 api_key_env=or_raw.get("api_key_env", config.openrouter.api_key_env),
+            )
+
+        if "ads" in raw:
+            ads_raw = raw["ads"]
+            config.ads = ADSConfig(
+                api_key_env=ads_raw.get("api_key_env", config.ads.api_key_env),
             )
 
         if "data_dir" in raw:

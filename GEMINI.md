@@ -9,21 +9,21 @@
     *   **Python 3.12+**: Core language.
     *   **Click**: CLI framework.
     *   **SQLite**: Local data persistence (using WAL mode for concurrency).
-    *   **LLM Backends**: OpenRouter (OpenAI-compatible).
-    *   **PDF Extraction**: `pymupdf4llm` for converting PDFs to Markdown-rich text.
-    *   **Metadata Extraction**: Fallback LLM-powered extraction for papers not yet indexed in academic databases.
-    *   **API Sources**: Semantic Scholar and OpenAlex for citation discovery.
+        *   **LLM Backends**: OpenRouter (OpenAI-compatible).
+        *   **PDF Extraction**: `pymupdf4llm` for converting PDFs to Markdown-rich text.
+        *   **Metadata Extraction**: Fallback LLM-powered extraction for papers not yet indexed in academic databases.
+        *   **API Sources**: Semantic Scholar, OpenAlex, and **NASA ADS** (for astronomy papers).
+        *   **Reporting**: Generates Markdown and HTML reports (with Mermaid influence graphs) saved locally.
     
-    *   **Reporting**: Generates Markdown and HTML reports (with Mermaid influence graphs) saved locally.
     *   **PWA**: A lightweight, client-side PWA (GitHub Pages) for quick paper lookups via OpenRouter.
     *   **Package Management**: `uv` is the preferred tool for installation and development.
 
 ## Architecture
 
 *   **`src/citation_tracker/cli.py`**: Entry point for all commands. Uses `ThreadPoolExecutor` for high-throughput processing.
-*   **`src/citation_tracker/db.py`**: Manages the SQLite schema and all database operations. Tables include `tracked_papers`, `citing_papers`, `analyses`, and `runs`.
-*   **`src/citation_tracker/sources/`**: Contains API clients for external academic databases and a `deduplicator.py` for merging results.
-*   **`src/citation_tracker/fetcher.py`**: Handles PDF downloads with fallbacks for Unpaywall, Crossref, and arXiv.
+*   **`src/citation_tracker/db.py`**: Manages the SQLite schema and all database operations. Tables include `tracked_papers`, `citing_papers`, `analyses`, and `runs`. Supports DOIs, SSIDs, OpenAlex IDs, and ADS Bibcodes.
+*   **`src/citation_tracker/sources/`**: Contains API clients for Semantic Scholar, OpenAlex, and NASA ADS. Includes a `deduplicator.py` for merging results.
+*   **`src/citation_tracker/fetcher.py`**: Handles PDF downloads with fallbacks for ADS Link Gateway, Unpaywall, Crossref, and arXiv.
 *   **`src/citation_tracker/analyser.py`**: Orchestrates LLM interactions. Implements a **map-reduce** strategy for long papers exceeding context limits.
 *   **`src/citation_tracker/report.py`**: Assembly of analysis reports, featuring **Mermaid.js influence trees** to visualize citation relationships.
 *   **`src/pwa/`**: A simplified, standalone PWA for mobile/web interaction.

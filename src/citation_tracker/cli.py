@@ -113,14 +113,33 @@ def _resolve_paper(
 ) -> dict[str, Any] | None:
     from citation_tracker.sources import semantic_scholar as ss
     from citation_tracker.sources import openalexapi as oa
+    from citation_tracker.sources import adsapi as ads
 
     if doi:
-        paper = ss.get_paper_by_doi(doi)
-        if paper is None:
-            paper = oa.get_paper_by_doi(doi)
-        if paper:
-            paper["source_url"] = None
-        return paper
+        paper_ss = ss.get_paper_by_doi(doi)
+        paper_oa = oa.get_paper_by_doi(doi)
+        paper_ads = ads.get_paper_by_doi(doi, cfg.ads.api_key)
+        
+        if not paper_ss and not paper_oa and not paper_ads:
+            return None
+            
+        # Merge results
+        # Prioritize SS for abstract, ADS for bibcode
+        best = paper_ss or paper_oa or paper_ads
+        merged = {
+            "title": (paper_ss or {}).get("title") or (paper_oa or {}).get("title") or (paper_ads or {}).get("title"),
+            "authors": (paper_ss or {}).get("authors") or (paper_oa or {}).get("authors") or (paper_ads or {}).get("authors"),
+            "year": (paper_ss or {}).get("year") or (paper_oa or {}).get("year") or (paper_ads or {}).get("year"),
+            "abstract": (paper_ss or {}).get("abstract") or (paper_oa or {}).get("abstract") or (paper_ads or {}).get("abstract"),
+            "doi": doi,
+            "ss_id": (paper_ss or {}).get("ss_id"),
+            "oa_id": (paper_oa or {}).get("oa_id"),
+            "ads_bibcode": (paper_ads or {}).get("ads_bibcode"),
+            "pdf_url": (paper_ss or {}).get("pdf_url") or (paper_oa or {}).get("pdf_url") or (paper_ads or {}).get("pdf_url"),
+        }
+        
+        merged["source_url"] = None
+        return merged
 
     if ss_id:
         paper = ss.get_paper_by_id(ss_id)
@@ -175,8 +194,16 @@ def _resolve_paper(
         paper = ss.search_paper_by_query(query)
         if paper is None:
             paper = oa.search_paper_by_query(query)
+        if paper is None:
+            paper = ads.search_paper_by_query(query, cfg.ads.api_key)
             
         if paper:
+            # If we found a DOI, re-resolve to merge both SS and OA metadata
+            if paper.get("doi"):
+                official = _resolve_paper(url=None, doi=paper["doi"], ss_id=None, cfg=cfg)
+                if official:
+                    official["source_url"] = url
+                    return official
             paper["source_url"] = url
         elif pdf_text:
             # API search failed but we have text! Use LLM to extract metadata.
@@ -475,6 +502,8 @@ def _process_paper(
 
     # ── 1. DISCOVER ────────────────────────────────────────────────────────
     citations: list[dict[str, Any]] = []
+    from citation_tracker.sources import adsapi as ads
+    
     if paper.get("ss_id"):
         try:
             citations.extend(ss.get_citations(paper["ss_id"]))
@@ -486,6 +515,12 @@ def _process_paper(
             citations.extend(oa.get_citations(paper["oa_id"]))
         except Exception as exc:
             errors.append(f"OA citations failed: {exc}")
+
+    if paper.get("ads_bibcode") and cfg.ads.api_key:
+        try:
+            citations.extend(ads.get_citations(paper["ads_bibcode"], cfg.ads.api_key))
+        except Exception as exc:
+            errors.append(f"ADS citations failed: {exc}")
 
     citations = deduplicate(citations)
 

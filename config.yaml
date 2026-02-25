@@ -7,6 +7,9 @@ openrouter:
   model: minimax/minimax-m2.5
   api_key_env: OPENROUTER_API_KEY
 
+ads:
+  api_key_env: ADS_DEV_KEY
+
 # Directory for database, PDFs, and reports
 data_dir: "~/.citation-tracker"
 

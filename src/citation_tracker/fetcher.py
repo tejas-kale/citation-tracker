@@ -73,6 +73,13 @@ def try_download_citing_paper(
         if path:
             return path
 
+    # Fallback: try ADS if bibcode is known
+    bibcode = paper.get("ads_bibcode")
+    if bibcode:
+        path = _try_ads(bibcode, pdfs_dir, doi=doi)
+        if path:
+            return path
+
     # Fallback: try Unpaywall if DOI is known
     if doi:
         path = _try_unpaywall(doi, pdfs_dir, email=email)
@@ -141,6 +148,17 @@ def _try_arxiv(doi: str | None, paper: dict[str, Any], pdfs_dir: Path) -> Path |
     if not arxiv_id:
         return None
     return download_pdf(f"https://arxiv.org/pdf/{arxiv_id}.pdf", pdfs_dir, doi=doi or arxiv_id)
+
+
+def _try_ads(bibcode: str, pdfs_dir: Path, doi: str | None = None) -> Path | None:
+    """Try to get a PDF via the ADS Link Gateway (EPRINT_PDF)."""
+    try:
+        pdf_url = f"https://ui.adsabs.harvard.edu/link_gateway/{bibcode}/EPRINT_PDF"
+        # We don't need the ADS token for the Link Gateway redirects usually
+        return download_pdf(pdf_url, pdfs_dir, doi=doi)
+    except Exception as exc:
+        logger.debug("ADS Link Gateway lookup failed for %s: %s", bibcode, exc)
+    return None
 
 
 def scan_manual_dir(manual_dir: Path) -> list[Path]:

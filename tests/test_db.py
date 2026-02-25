@@ -36,6 +36,7 @@ def test_insert_and_get_tracked_paper(db_path):
         "title": "Test Paper",
         "authors": "Author A, Author B",
         "year": 2023,
+        "ads_bibcode": "2023Test...1...1A"
     }
     with get_conn(db_path) as conn:
         paper_id = insert_tracked_paper(conn, paper)
@@ -44,6 +45,7 @@ def test_insert_and_get_tracked_paper(db_path):
         fetched = get_tracked_paper_by_id(conn, paper_id)
         assert fetched["title"] == "Test Paper"
         assert fetched["doi"] == "10.1234/test"
+        assert fetched["ads_bibcode"] == "2023Test...1...1A"
 
 def test_upsert_citing_paper(db_path):
     init_db(db_path)
@@ -51,6 +53,7 @@ def test_upsert_citing_paper(db_path):
     citing = {
         "doi": "10.5678/citing",
         "title": "Citing Paper",
+        "ads_bibcode": "2023Citing..1...1C"
     }
     with get_conn(db_path) as conn:
         # Need to insert tracked paper first because of FK
@@ -58,6 +61,10 @@ def test_upsert_citing_paper(db_path):
         
         cid1, is_new1 = upsert_citing_paper(conn, tracked_id, citing)
         assert is_new1 is True
+        
+        # Verify bibcode was saved
+        row = conn.execute("SELECT ads_bibcode FROM citing_papers WHERE id=?", (cid1,)).fetchone()
+        assert row["ads_bibcode"] == "2023Citing..1...1C"
         
         cid2, is_new2 = upsert_citing_paper(conn, tracked_id, citing)
         assert is_new2 is False

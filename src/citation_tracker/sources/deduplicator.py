@@ -17,11 +17,13 @@ def deduplicate(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     doi_map: dict[str, dict[str, Any]] = {}
     ss_map: dict[str, dict[str, Any]] = {}
+    ads_map: dict[str, dict[str, Any]] = {}
     unique: list[dict[str, Any]] = []
 
     for paper in papers:
         doi = (paper.get("doi") or "").strip().lower()
         ss_id = paper.get("ss_id") or ""
+        bibcode = paper.get("ads_bibcode") or ""
 
         if doi:
             if doi in doi_map:
@@ -34,6 +36,12 @@ def deduplicate(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 _merge_into(ss_map[ss_id], paper)
                 continue
             ss_map[ss_id] = paper
+            unique.append(paper)
+        elif bibcode:
+            if bibcode in ads_map:
+                _merge_into(ads_map[bibcode], paper)
+                continue
+            ads_map[bibcode] = paper
             unique.append(paper)
         else:
             unique.append(paper)
