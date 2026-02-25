@@ -22,15 +22,9 @@ class OpenRouterConfig:
 
 
 @dataclass
-class ClaudeCodeConfig:
-    flags: str = ""
-
-
-@dataclass
 class Config:
     backend: str = "openrouter"
     openrouter: OpenRouterConfig = field(default_factory=OpenRouterConfig)
-    claude_code: ClaudeCodeConfig = field(default_factory=ClaudeCodeConfig)
     data_dir: Path = field(default_factory=lambda: Path.home() / ".citation-tracker")
     unpaywall_email: str = ""
 
@@ -74,12 +68,6 @@ def load_config(config_path: Path | None = None, env_path: Path | None = None) -
             config.openrouter = OpenRouterConfig(
                 model=or_raw.get("model", config.openrouter.model),
                 api_key_env=or_raw.get("api_key_env", config.openrouter.api_key_env),
-            )
-
-        if "claude_code" in raw:
-            cc_raw = raw["claude_code"]
-            config.claude_code = ClaudeCodeConfig(
-                flags=cc_raw.get("flags", config.claude_code.flags),
             )
 
         if "data_dir" in raw:

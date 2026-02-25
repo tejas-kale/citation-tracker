@@ -67,10 +67,6 @@ def _get_backend(config: Config) -> Any:
         from citation_tracker.backends import openrouter
 
         return lambda prompt: openrouter.analyse(prompt, config.openrouter)
-    elif config.backend == "claude_code":
-        from citation_tracker.backends import claude_code
-
-        return lambda prompt: claude_code.analyse(prompt, config.claude_code)
     else:
         raise ValueError(f"Unknown backend: {config.backend!r}")
 
@@ -88,14 +84,6 @@ def _call_llm_text(prompt: str, config: Config) -> str:
             temperature=0.1,
         )
         return resp.choices[0].message.content or ""
-    elif config.backend == "claude_code":
-        import subprocess
-
-        cmd = ["claude", "-p"]
-        if config.claude_code.flags:
-            cmd.extend(config.claude_code.flags.split())
-        result = subprocess.run(cmd, input=prompt, capture_output=True, text=True, check=True)
-        return result.stdout.strip()
     else:
         raise ValueError(f"Unknown backend: {config.backend!r}")
 
@@ -149,4 +137,22 @@ def analyse_citing_paper(
         extracted_text=text,
     )
 
+    return backend_fn(prompt)
+
+
+def parse_paper_metadata(text: str, config: Config) -> dict[str, Any]:
+    """Extract paper metadata (title, authors, year, abstract) from PDF text using LLM."""
+    backend_fn = _get_backend(config)
+
+    prompt = f"""\
+Extract the metadata for this academic paper from its text.
+Return a JSON object with these fields: title, authors, year, abstract.
+If a field is unknown, use null.
+The 'authors' field should be a comma-separated string.
+
+TEXT:
+{text[:4000]}
+
+Return only valid JSON. No preamble.
+"""
     return backend_fn(prompt)

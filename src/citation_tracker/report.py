@@ -49,6 +49,8 @@ def build_report(
         lines.append(f"*Year: {tracked_paper['year']}*  ")
     if tracked_paper["doi"]:
         lines.append(f"*DOI: {tracked_paper['doi']}*  ")
+    if tracked_paper["source_url"]:
+        lines.append(f"*Source URL: {tracked_paper['source_url']}*  ")
     lines.append(f"\n*Generated: {now}*\n")
 
     if analyses:

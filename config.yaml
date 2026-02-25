@@ -1,14 +1,11 @@
 # Citation Tracker Configuration
 
-# Backend to use for LLM analysis: openrouter or claude_code
+# Backend to use for LLM analysis: openrouter
 backend: openrouter
 
 openrouter:
   model: minimax/minimax-m2.5
   api_key_env: OPENROUTER_API_KEY
-
-claude_code:
-  flags: ""   # optional extra flags passed to claude -p
 
 # Directory for database, PDFs, and reports
 data_dir: "~/.citation-tracker"

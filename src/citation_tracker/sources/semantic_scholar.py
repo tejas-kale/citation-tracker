@@ -39,9 +39,14 @@ def _get(url: str, params: dict[str, Any]) -> Any:
 
 def search_paper_by_title(title: str) -> dict[str, Any] | None:
     """Search Semantic Scholar for a paper by title, return best match."""
+    return search_paper_by_query(title)
+
+
+def search_paper_by_query(query: str) -> dict[str, Any] | None:
+    """Search Semantic Scholar with a general query string."""
     data = _get(
         f"{SS_BASE}/paper/search",
-        {"query": title, "fields": FIELDS, "limit": 1},
+        {"query": query, "fields": FIELDS, "limit": 1},
     )
     items = data.get("data") or []
     if not items:
@@ -64,6 +69,17 @@ def get_paper_by_doi(doi: str) -> dict[str, Any] | None:
     """Fetch paper metadata from Semantic Scholar by DOI."""
     try:
         data = _get(f"{SS_BASE}/paper/DOI:{doi}", {"fields": FIELDS})
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return None
+        raise
+    return _paper_to_dict(data)
+
+
+def get_paper_by_arxiv(arxiv_id: str) -> dict[str, Any] | None:
+    """Fetch paper metadata from Semantic Scholar by arXiv ID."""
+    try:
+        data = _get(f"{SS_BASE}/paper/ARXIV:{arxiv_id}", {"fields": FIELDS})
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             return None

@@ -78,7 +78,7 @@ def add_paper(ctx: click.Context, url: str | None, doi: str | None, ss_id: str |
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
-    paper = _resolve_paper(url=url, doi=doi, ss_id=ss_id)
+    paper = _resolve_paper(url=url, doi=doi, ss_id=ss_id, cfg=cfg)
     if paper is None:
         console.print("[red]Could not resolve paper metadata.[/red]")
         sys.exit(1)
@@ -98,8 +98,18 @@ def add_paper(ctx: click.Context, url: str | None, doi: str | None, ss_id: str |
         console.print(f"[green]Added paper (id={paper_id}): {paper.get('title', 'N/A')}[/green]")
 
 
+def _clean_query(text: str, max_len: int = 200) -> str:
+    """Clean extracted text for use as a search query (remove Markdown, normalize space)."""
+    import re
+    # Remove markdown formatting (headers, bold, links)
+    text = re.sub(r"[#*_\[\]()]", " ", text)
+    # Normalize whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:max_len]
+
+
 def _resolve_paper(
-    url: str | None, doi: str | None, ss_id: str | None
+    url: str | None, doi: str | None, ss_id: str | None, cfg: Any
 ) -> dict[str, Any] | None:
     from citation_tracker.sources import semantic_scholar as ss
     from citation_tracker.sources import openalexapi as oa
@@ -119,21 +129,75 @@ def _resolve_paper(
         return paper
 
     if url:
-        # Try to extract DOI from URL
         import re
-
+        # Try to extract DOI from URL
         doi_match = re.search(r"10\.\d{4,}/[^\s\"'<>]+", url)
         if doi_match:
-            return _resolve_paper(url=None, doi=doi_match.group(), ss_id=None)
+            return _resolve_paper(url=None, doi=doi_match.group(), ss_id=None, cfg=cfg)
+        
+        # Try to extract arXiv ID from URL
+        arxiv_match = re.search(r"(\d{4}\.\d{4,5}(v\d+)?|arxiv:[a-z\-]+(\.[a-z\-]+)?/\d{7})", url.lower())
+        if arxiv_match:
+            arxiv_id = arxiv_match.group(1)
+            paper = ss.get_paper_by_arxiv(arxiv_id)
+            if paper is None:
+                paper = oa.get_paper_by_arxiv(arxiv_id)
+            if paper:
+                paper["source_url"] = url
+                return paper
 
-        # Attempt to download PDF and search by filename/URL
-        title_guess = Path(url).stem.replace("_", " ").replace("-", " ")
-        paper = ss.search_paper_by_title(title_guess)
+        # Attempt to download PDF and search by content if filename is short/ambiguous
+        filename = Path(url).name
+        # Remove common extensions
+        title_guess = filename
+        for ext in [".pdf", ".html", ".htm"]:
+            if title_guess.lower().endswith(ext):
+                title_guess = title_guess[:-len(ext)]
+        title_guess = title_guess.replace("_", " ").replace("-", " ")
+        
+        query = _clean_query(title_guess)
+        
+        # If filename is very short (like 'jmp.pdf'), try to download and peek at content
+        pdf_text = None
+        if len(title_guess) < 10:
+            from citation_tracker.fetcher import download_pdf
+            from citation_tracker.parser import extract_text
+            import tempfile
+            
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp_path = download_pdf(url, Path(tmpdir), filename_hint="resolve")
+                if tmp_path:
+                    pdf_text = extract_text(tmp_path)
+                    if pdf_text:
+                        query = _clean_query(pdf_text, max_len=200)
+
+        paper = ss.search_paper_by_query(query)
         if paper is None:
-            paper = oa.search_paper_by_title(title_guess)
+            paper = oa.search_paper_by_query(query)
+            
         if paper:
             paper["source_url"] = url
-        else:
+        elif pdf_text:
+            # API search failed but we have text! Use LLM to extract metadata.
+            from citation_tracker.analyser import parse_paper_metadata
+            try:
+                console.print(f"  API search failed. Extracting metadata from PDF using LLM...")
+                extracted = parse_paper_metadata(pdf_text, cfg)
+                paper = {
+                    "doi": extracted.get("doi"),
+                    "title": extracted.get("title") or title_guess,
+                    "authors": extracted.get("authors"),
+                    "year": extracted.get("year"),
+                    "abstract": extracted.get("abstract"),
+                    "source_url": url,
+                    "ss_id": None,
+                    "oa_id": None,
+                    "pdf_url": url,
+                }
+            except Exception as exc:
+                logger.warning("LLM metadata extraction failed: %s", exc)
+
+        if paper is None:
             # Create a stub entry with just the URL
             paper = {
                 "doi": None,
@@ -173,16 +237,18 @@ def list_papers(ctx: click.Context) -> None:
     table = Table(title="Tracked Papers")
     table.add_column("ID", justify="right")
     table.add_column("Title")
-    table.add_column("DOI")
+    table.add_column("DOI/URL")
     table.add_column("Year")
     table.add_column("Active")
     table.add_column("Added")
 
     for p in papers:
+        # Use DOI if available, else source_url
+        location = p["doi"] or p["source_url"] or ""
         table.add_row(
             str(p["id"]),
             (p["title"] or "")[:60],
-            p["doi"] or "",
+            location[:40],
             str(p["year"] or ""),
             "✓" if p["active"] else "✗",
             (p["added_at"] or "")[:10],
@@ -275,13 +341,13 @@ def remove_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> N
 
 
 @main.command("run")
-@click.option("--doi", default=None, help="Process a single tracked paper by DOI")
-@click.option("--backend", default=None, help="Override backend (openrouter|claude_code)")
+@click.option("--id", "paper_id", default=None, help="Process a single tracked paper by numeric ID or DOI")
+@click.option("--backend", default=None, help="Override backend (openrouter)")
 @click.option("--workers", default=8, show_default=True, type=int, help="Worker threads for fetch/parse/analyse")
 @click.option("--triggered-by", default="manual", hidden=True)
 @click.pass_context
 def run_pipeline(
-    ctx: click.Context, doi: str | None, backend: str | None, workers: int, triggered_by: str
+    ctx: click.Context, paper_id: str | None, backend: str | None, workers: int, triggered_by: str
 ) -> None:
     """Run the full discovery → fetch → parse → analyse → report pipeline."""
     cfg = ctx.obj["cfg"]
@@ -299,10 +365,15 @@ def run_pipeline(
     )
 
     with get_conn(db_path) as conn:
-        if doi:
-            paper = get_tracked_paper_by_doi(conn, doi)
+        if paper_id:
+            # Try numeric ID/hex ID first, then fallback to DOI
+            paper = get_tracked_paper_by_id(conn, paper_id)
+            
             if paper is None:
-                console.print(f"[red]Paper with DOI {doi!r} not found.[/red]")
+                paper = get_tracked_paper_by_doi(conn, paper_id)
+
+            if paper is None:
+                console.print(f"[red]Paper with ID or DOI {paper_id!r} not found.[/red]")
                 sys.exit(1)
             papers_to_run = [paper]
         else:
@@ -548,7 +619,7 @@ def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) ->
             sys.exit(1)
 
     # Resolve citing paper metadata
-    citing_paper = _resolve_paper(url=None, doi=doi, ss_id=None)
+    citing_paper = _resolve_paper(url=None, doi=doi, ss_id=None, cfg=cfg)
     if citing_paper is None:
         # If we can't resolve metadata, create a stub from filename
         title_guess = Path(pdf_path).stem.replace("_", " ").replace("-", " ")

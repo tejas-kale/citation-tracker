@@ -48,9 +48,14 @@ def _get(url: str, params: dict[str, Any]) -> Any:
 
 def search_paper_by_title(title: str) -> dict[str, Any] | None:
     """Search OpenAlex for a paper by title, return best match."""
+    return search_paper_by_query(title)
+
+
+def search_paper_by_query(query: str) -> dict[str, Any] | None:
+    """Search OpenAlex with a general query string."""
     data = _get(
         f"{OA_BASE}/works",
-        {"search": title, "per_page": 1},
+        {"search": query, "per_page": 1},
     )
     results = data.get("results") or []
     if not results:
@@ -67,6 +72,20 @@ def get_paper_by_doi(doi: str) -> dict[str, Any] | None:
             return None
         raise
     return _work_to_dict(data)
+
+
+def get_paper_by_arxiv(arxiv_id: str) -> dict[str, Any] | None:
+    """Fetch paper metadata from OpenAlex by arXiv ID."""
+    try:
+        data = _get(f"{OA_BASE}/works", {"filter": f"ids.arxiv:{arxiv_id}"})
+        results = data.get("results") or []
+        if not results:
+            return None
+        return _work_to_dict(results[0])
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return None
+        raise
 
 
 def get_citations(oa_id: str, max_results: int = 500) -> list[dict[str, Any]]:
