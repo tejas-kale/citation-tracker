@@ -36,9 +36,10 @@ def test_build_report(mock_tracked_paper, mock_analyses):
     assert "# Citation Report: Main Paper" in report
     assert "*Author 1*" in report
     assert "Source URL: https://example.com/main.pdf" in report
-    assert "Executive Synthesis" in report
+    assert "Scholarly Synthesis & Impact Assessment" in report
     assert synthesis in report
-    assert "### Citing A" in report
+    assert "<details>" in report
+    assert "<summary><b>Citing A</b>" in report
     assert "**Relationship:** `supports`" in report
 
 def test_render_html():

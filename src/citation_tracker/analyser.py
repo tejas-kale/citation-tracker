@@ -165,7 +165,7 @@ def generate_executive_synthesis(
     all_summaries = "\n---\n".join(summaries)
 
     prompt = f"""\
-You are a senior academic advisor and research lead. Your task is to provide a sophisticated executive synthesis of how the research community is engaging with the following paper.
+You are a senior academic advisor and research lead. Your task is to provide a sophisticated scholarly synthesis of how the research community is engaging with the following paper.
 
 TRACKED PAPER:
 Title: {tracked_paper.get('title')}
@@ -175,14 +175,19 @@ CITING ANALYSES:
 {all_summaries}
 
 INSTRUCTIONS:
-Write a 3-4 paragraph "Executive Synthesis" for a tenured professor. 
-Focus on:
-1. The broader trajectory of the research field as influenced by the tracked paper.
-2. Major thematic clusters of engagement (e.g., extensions into new environments, theoretical refinements, or methodological shifts).
-3. Critical discourse: identify if the community is confirming, extending, or beginning to challenge the core findings.
-4. High-level impact assessment: how has the paper shifted the 'state of the art' in its specific niche?
+Write a "Scholarly Synthesis & Impact Assessment" for a tenured professor. 
+STRICT CONSTRAINTS:
+1. Maximum 3 paragraphs.
+2. Each paragraph must be exactly 4-5 lines long.
+3. Use a rigorous, dense academic tone.
+4. Do NOT include a title or heading in your response.
+5. Do NOT list individual papers; synthesize the collective findings into a narrative.
 
-Use rigorous academic tone. Do not list individual papers; synthesize the collective findings into a narrative.
+FOCUS ON:
+- Field trajectory and thematic clusters.
+- Critical discourse (confirming vs. challenging).
+- High-level 'state of the art' impact.
+
 Return raw Markdown.
 """
     # Use the text-only caller to get a raw narrative

@@ -40,14 +40,15 @@ def build_report(
     lines.append(f"\n*Generated: {now}*\n")
 
     if executive_synthesis:
-        lines.append("## Executive Synthesis\n")
+        lines.append("## Scholarly Synthesis & Impact Assessment\n")
         lines.append(f"{executive_synthesis}\n")
         lines.append("---\n")
 
     if analyses:
         lines.append(f"## Individual Citing Papers ({len(analyses)} analysed)\n")
         for a in analyses:
-            lines.append(f"### {a['citing_title'] or 'Untitled'}")
+            lines.append("<details>")
+            lines.append(f"<summary><b>{a['citing_title'] or 'Untitled'}</b> ({a['citing_year'] or 'N/A'})</summary>\n")
             lines.append(
                 f"**Authors:** {_format_authors(a['citing_authors'])}  "
                 f"**Year:** {a['citing_year'] or 'N/A'}  "
@@ -64,7 +65,8 @@ def build_report(
                 lines.append(f"**Assumptions Questioned:** {a['assumptions_questioned']}\n")
             if a["other_notes"]:
                 lines.append(f"**Other Notes:** {a['other_notes']}\n")
-            lines.append("---\n")
+            lines.append("</details>")
+            lines.append("")
     else:
         lines.append("## No new analysed citations in this run.\n")
 
@@ -126,6 +128,19 @@ def render_full_report_html(markdown_content: str) -> str:
         code {{ background: #f4f4f4; padding: 2px 4px; border-radius: 4px; }}
         hr {{ border: 0; border-top: 2px solid #eee; margin: 40px 0; }}
         .metadata {{ color: #666; font-style: italic; }}
+        details {{
+            margin: 10px 0;
+            padding: 10px 15px;
+            background: #fcfcfc;
+            border: 1px solid #eee;
+            border-radius: 6px;
+        }}
+        summary {{
+            cursor: pointer;
+            font-weight: 500;
+            color: #2d3748;
+        }}
+        summary:hover {{ color: #3182ce; }}
     </style>
 </head>
 <body>
