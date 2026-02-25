@@ -8,7 +8,8 @@ def mock_tracked_paper():
         "title": "Main Paper",
         "authors": "Author 1",
         "year": 2020,
-        "doi": "10.1/main"
+        "doi": "10.1/main",
+        "source_url": "https://example.com/main.pdf"
     }
 
 @pytest.fixture
@@ -32,6 +33,7 @@ def test_build_report(mock_tracked_paper, mock_analyses):
     report = build_report(mock_tracked_paper, mock_analyses, [])
     assert "# Citation Report: Main Paper" in report
     assert "*Author 1*" in report
+    assert "Source URL: https://example.com/main.pdf" in report
     assert "```mermaid" in report
     assert "T -->|supports| C1" in report
     assert "### Citing A" in report
