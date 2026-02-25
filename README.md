@@ -81,6 +81,11 @@ citation-tracker show --id <ID>
 ```
 
 Reports are automatically generated as HTML files in `~/.citation-tracker/reports/` after each `run`.
+Reports now include a Mermaid influence tree graph per tracked paper.
+
+### Simple PWA (fresh run, no persistence)
+
+Open `docs/pwa/index.html` in a browser (or serve `docs/pwa/` with any static file server) to run one-off OpenRouter analyses from a minimal installable web app.
 
 ## Configuration
 

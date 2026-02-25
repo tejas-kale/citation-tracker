@@ -6,6 +6,7 @@ import logging
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -77,6 +78,12 @@ def try_download_citing_paper(
         path = _try_unpaywall(doi, pdfs_dir, email=email)
         if path:
             return path
+        path = _try_crossref(doi, pdfs_dir)
+        if path:
+            return path
+        path = _try_arxiv(doi=doi, paper=paper, pdfs_dir=pdfs_dir)
+        if path:
+            return path
 
     return None
 
@@ -96,6 +103,44 @@ def _try_unpaywall(doi: str, pdfs_dir: Path, email: str = "citation-tracker@exam
     except Exception as exc:
         logger.debug("Unpaywall lookup failed for %s: %s", doi, exc)
     return None
+
+
+def _try_crossref(doi: str, pdfs_dir: Path) -> Path | None:
+    """Try to get a PDF via Crossref links for a DOI."""
+    try:
+        url = f"https://api.crossref.org/works/{quote(doi, safe='')}"
+        with httpx.Client(timeout=15, headers=_HEADERS) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+        links = (data.get("message") or {}).get("link") or []
+        for link in links:
+            content_type = (link.get("content-type") or "").lower()
+            candidate = link.get("URL")
+            if candidate and "pdf" in content_type:
+                path = download_pdf(candidate, pdfs_dir, doi=doi)
+                if path:
+                    return path
+    except Exception as exc:
+        logger.debug("Crossref lookup failed for %s: %s", doi, exc)
+    return None
+
+
+def _extract_arxiv_id(doi: str | None, paper: dict[str, Any]) -> str | None:
+    arxiv_id = paper.get("arxiv_id")
+    if arxiv_id:
+        return str(arxiv_id)
+    if doi and doi.lower().startswith("10.48550/arxiv."):
+        return doi.split("/", 1)[1].replace("arXiv.", "", 1)
+    return None
+
+
+def _try_arxiv(doi: str | None, paper: dict[str, Any], pdfs_dir: Path) -> Path | None:
+    """Try a direct arXiv PDF URL when an arXiv id is available."""
+    arxiv_id = _extract_arxiv_id(doi, paper)
+    if not arxiv_id:
+        return None
+    return download_pdf(f"https://arxiv.org/pdf/{arxiv_id}.pdf", pdfs_dir, doi=doi or arxiv_id)
 
 
 def scan_manual_dir(manual_dir: Path) -> list[Path]:

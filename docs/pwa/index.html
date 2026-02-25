@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Citation Tracker PWA</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #f8fafc; color: #0f172a; }
+    main { max-width: 900px; margin: 2rem auto; background: #fff; padding: 1rem; border-radius: 8px; }
+    label { display: block; font-weight: 600; margin-top: 0.75rem; }
+    textarea, input { width: 100%; box-sizing: border-box; margin-top: 0.25rem; padding: 0.5rem; }
+    button { margin-top: 1rem; padding: 0.6rem 1rem; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 0.75rem; overflow: auto; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Citation Tracker (Fresh Run)</h1>
+    <p>No persistence: every run uses values currently entered on this page.</p>
+    <label>OpenRouter API key<input id="apiKey" type="password" autocomplete="off" /></label>
+    <label>Model<input id="model" value="minimax/minimax-m2.5" /></label>
+    <label>Tracked paper title<input id="trackedTitle" /></label>
+    <label>Tracked paper authors<input id="trackedAuthors" /></label>
+    <label>Tracked paper abstract<textarea id="trackedAbstract" rows="3"></textarea></label>
+    <label>Citing paper title<input id="citingTitle" /></label>
+    <label>Citing paper text<textarea id="citingText" rows="10"></textarea></label>
+    <button id="runBtn">Run Analysis</button>
+    <pre id="output">Waiting for input…</pre>
+  </main>
+  <script>
+    const promptTemplate = ({ trackedTitle, trackedAuthors, trackedAbstract, citingTitle, citingText }) => `CONTEXT — ORIGINAL PAPER
+Title: ${trackedTitle}
+Authors: ${trackedAuthors}
+Abstract: ${trackedAbstract}
+
+CITING PAPER
+Title: ${citingTitle}
+Full text (Markdown):
+${citingText}
+
+TASK
+Analyse how this citing paper engages with the original paper above.
+Return a JSON object with exactly these fields:
+{
+  "summary": "2–3 sentence overview of the citing paper's argument",
+  "relationship_type": "one of: supports | challenges | extends | uses | neutral",
+  "new_evidence": "any new empirical or theoretical evidence introduced, or null",
+  "flaws_identified": "any flaws or limitations of the original paper raised, or null",
+  "assumptions_questioned": "any assumptions of the original paper challenged, or null",
+  "other_notes": "anything else notable about how this paper engages, or null"
+}
+Return only valid JSON. No preamble.`;
+
+    document.getElementById("runBtn").addEventListener("click", async () => {
+      const output = document.getElementById("output");
+      output.textContent = "Running…";
+      const apiKey = document.getElementById("apiKey").value.trim();
+      if (!apiKey) {
+        output.textContent = "Please enter an OpenRouter API key.";
+        return;
+      }
+      try {
+        const body = {
+          model: document.getElementById("model").value.trim(),
+          messages: [{ role: "user", content: promptTemplate({
+            trackedTitle: document.getElementById("trackedTitle").value.trim(),
+            trackedAuthors: document.getElementById("trackedAuthors").value.trim(),
+            trackedAbstract: document.getElementById("trackedAbstract").value.trim(),
+            citingTitle: document.getElementById("citingTitle").value.trim(),
+            citingText: document.getElementById("citingText").value.trim(),
+          }) }],
+          temperature: 0.1
+        };
+        const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+          },
+          body: JSON.stringify(body)
+        });
+        const data = await resp.json();
+        output.textContent = data?.choices?.[0]?.message?.content ?? JSON.stringify(data, null, 2);
+      } catch (err) {
+        output.textContent = String(err);
+      }
+    });
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./service-worker.js").catch(() => {});
+    }
+  </script>
+</body>
+</html>

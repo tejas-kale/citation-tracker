@@ -46,6 +46,20 @@ Summarise the following section of an academic paper in 3–5 sentences:
 
 Return only the summary text, no preamble.\
 """
+_REDUCE_SUMMARY_PROMPT = """\
+You are combining section summaries from a long academic paper.
+
+Section summaries:
+{summaries}
+
+Produce a coherent synthesis (8-12 sentences) that preserves key nuance:
+- main argument and method
+- strongest evidence/results
+- caveats or limitations
+- points most relevant to how this paper may engage with another work
+
+Return only the synthesis text, no preamble.\
+"""
 
 
 def _get_backend(config: Config) -> Any:
@@ -94,7 +108,14 @@ def _map_reduce(text: str, config: Config) -> str:
         logger.debug("Summarising chunk %d/%d", i + 1, len(chunks))
         prompt = _CHUNK_SUMMARY_PROMPT.format(chunk=chunk)
         summaries.append(_call_llm_text(prompt, config))
-    return "\n\n".join(summaries)
+    if len(summaries) == 1:
+        return summaries[0]
+    return _call_llm_text(
+        _REDUCE_SUMMARY_PROMPT.format(
+            summaries="\n\n".join(f"Section {i + 1}: {s}" for i, s in enumerate(summaries))
+        ),
+        config,
+    )
 
 
 def analyse_citing_paper(

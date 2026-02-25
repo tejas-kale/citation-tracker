@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -276,10 +277,11 @@ def remove_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> N
 @main.command("run")
 @click.option("--doi", default=None, help="Process a single tracked paper by DOI")
 @click.option("--backend", default=None, help="Override backend (openrouter|claude_code)")
+@click.option("--workers", default=8, show_default=True, type=int, help="Worker threads for fetch/parse/analyse")
 @click.option("--triggered-by", default="manual", hidden=True)
 @click.pass_context
 def run_pipeline(
-    ctx: click.Context, doi: str | None, backend: str | None, triggered_by: str
+    ctx: click.Context, doi: str | None, backend: str | None, workers: int, triggered_by: str
 ) -> None:
     """Run the full discovery → fetch → parse → analyse → report pipeline."""
     cfg = ctx.obj["cfg"]
@@ -319,7 +321,7 @@ def run_pipeline(
 
     for paper_row in papers_to_run:
         paper_dict = dict(paper_row)
-        new, analysed, errors, section = _process_paper(paper_dict, cfg, db_path)
+        new, analysed, errors, section = _process_paper(paper_dict, cfg, db_path, workers=max(1, workers))
         total_new += new
         total_analysed += analysed
         all_errors.extend(errors)
@@ -362,6 +364,7 @@ def _process_paper(
     paper: dict[str, Any],
     cfg: Any,
     db_path: Path,
+    workers: int = 8,
 ) -> tuple[int, int, list[str], Any]:
     """Run the pipeline for one tracked paper. Returns (new, analysed, errors, report_section)."""
     from citation_tracker.db import (
@@ -417,14 +420,19 @@ def _process_paper(
     with get_conn(db_path) as conn:
         pending = get_citing_papers_pending_pdf(conn, tracked_id)
 
-    for cp in pending:
-        cp_dict = dict(cp)
-        path = try_download_citing_paper(cp_dict, cfg.pdfs_dir, email=cfg.unpaywall_email or "citation-tracker@example.com")
-        with get_conn(db_path) as conn:
-            if path:
-                update_citing_paper_pdf(conn, cp["id"], "downloaded")
-            else:
-                update_citing_paper_pdf(conn, cp["id"], "failed")
+    def _fetch_one(cp_row: Any) -> tuple[str, bool]:
+        cp_dict = dict(cp_row)
+        path = try_download_citing_paper(
+            cp_dict, cfg.pdfs_dir, email=cfg.unpaywall_email or "citation-tracker@example.com"
+        )
+        return cp_dict["id"], bool(path)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(_fetch_one, cp) for cp in pending]
+        for future in as_completed(futures):
+            cp_id, ok = future.result()
+            with get_conn(db_path) as conn:
+                update_citing_paper_pdf(conn, cp_id, "downloaded" if ok else "failed")
 
     # Check manual dir
     for manual_pdf in scan_manual_dir(cfg.manual_dir):
@@ -440,52 +448,66 @@ def _process_paper(
             (tracked_id,),
         ).fetchall()
 
-    for cp in downloaded:
+    def _parse_one(cp_row: Any) -> tuple[str, str | None]:
         from citation_tracker.fetcher import _doi_to_path
-        doi_safe = _doi_to_path(cp["doi"]) if cp["doi"] else "unknown"
+
+        cp_dict = dict(cp_row)
+        doi_safe = _doi_to_path(cp_dict["doi"]) if cp_dict["doi"] else "unknown"
         pdf_path = cfg.pdfs_dir / doi_safe / "paper.pdf"
         if not pdf_path.exists():
-            continue
-        text = extract_text(pdf_path)
-        if text:
-            with get_conn(db_path) as conn:
-                update_citing_paper_text(conn, cp["id"], text)
+            return cp_dict["id"], None
+        return cp_dict["id"], extract_text(pdf_path)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(_parse_one, cp) for cp in downloaded]
+        for future in as_completed(futures):
+            cp_id, text = future.result()
+            if text:
+                with get_conn(db_path) as conn:
+                    update_citing_paper_text(conn, cp_id, text)
 
     # ── 4. ANALYSE ─────────────────────────────────────────────────────────
     with get_conn(db_path) as conn:
         to_analyse = get_citing_papers_for_analysis(conn, tracked_id)
 
     papers_analysed = 0
-    for cp in to_analyse:
-        try:
-            result = analyse_citing_paper(
-                tracked_paper=paper,
-                citing_paper=dict(cp),
-                extracted_text=cp["extracted_text"] or "",
-                config=cfg,
-            )
-            import json
+    def _analyse_one(cp_row: Any) -> tuple[str, dict[str, Any]]:
+        cp_dict = dict(cp_row)
+        result = analyse_citing_paper(
+            tracked_paper=paper,
+            citing_paper=cp_dict,
+            extracted_text=cp_dict.get("extracted_text") or "",
+            config=cfg,
+        )
+        return cp_dict["id"], result
 
-            with get_conn(db_path) as conn:
-                insert_analysis(
-                    conn,
-                    {
-                        "citing_paper_id": cp["id"],
-                        "tracked_paper_id": tracked_id,
-                        "backend_used": cfg.backend,
-                        "summary": result.get("summary"),
-                        "relationship_type": result.get("relationship_type"),
-                        "new_evidence": result.get("new_evidence"),
-                        "flaws_identified": result.get("flaws_identified"),
-                        "assumptions_questioned": result.get("assumptions_questioned"),
-                        "other_notes": result.get("other_notes"),
-                        "raw_response": json.dumps(result),
-                    },
-                )
-            papers_analysed += 1
-        except Exception as exc:
-            errors.append(f"Analysis failed for citing paper id={cp['id']}: {exc}")
-            logger.warning("Analysis failed: %s", exc)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(_analyse_one, cp) for cp in to_analyse]
+        for future in as_completed(futures):
+            try:
+                cp_id, result = future.result()
+                import json
+
+                with get_conn(db_path) as conn:
+                    insert_analysis(
+                        conn,
+                        {
+                            "citing_paper_id": cp_id,
+                            "tracked_paper_id": tracked_id,
+                            "backend_used": cfg.backend,
+                            "summary": result.get("summary"),
+                            "relationship_type": result.get("relationship_type"),
+                            "new_evidence": result.get("new_evidence"),
+                            "flaws_identified": result.get("flaws_identified"),
+                            "assumptions_questioned": result.get("assumptions_questioned"),
+                            "other_notes": result.get("other_notes"),
+                            "raw_response": json.dumps(result),
+                        },
+                    )
+                papers_analysed += 1
+            except Exception as exc:
+                errors.append(f"Analysis failed: {exc}")
+                logger.warning("Analysis failed: %s", exc)
 
     # ── 5. REPORT ──────────────────────────────────────────────────────────
     from citation_tracker.db import list_analyses
