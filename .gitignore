@@ -30,6 +30,9 @@ data/manual/*.pdf
 .idea/
 *.swp
 
+# AI transcripts
+.aitranscripts/
+
 # OS
 .DS_Store
 Thumbs.db
