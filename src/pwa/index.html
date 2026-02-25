@@ -88,15 +88,73 @@
       font-weight: 500;
       cursor: pointer;
     }
+    .go-btn:active {
+      opacity: 0.8;
+    }
+    .progress-container {
+      height: 4px;
+      width: 100%;
+      background-color: var(--md-sys-color-surface-variant);
+      margin: 16px 0;
+      border-radius: 2px;
+      overflow: hidden;
+      display: none;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background-color: var(--md-sys-color-primary);
+      transition: width 0.3s ease;
+    }
+    .progress-container.active {
+      display: block;
+    }
+    .progress-bar.indeterminate {
+      width: 100%;
+      animation: indeterminate 1.5s infinite linear;
+      transform-origin: 0% 50%;
+    }
+    @keyframes indeterminate {
+      0% { transform: translateX(-100%) scaleX(0.2); }
+      50% { transform: translateX(0%) scaleX(0.5); }
+      100% { transform: translateX(100%) scaleX(0.2); }
+    }
+    .result-view {
+      display: none;
+      margin-top: 16px;
+    }
+    .result-view.active {
+      display: block;
+    }
+    .result-header {
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: var(--md-sys-color-primary);
+    }
+    .result-card {
+      border-top: 1px solid var(--md-sys-color-surface-variant);
+      padding-top: 12px;
+      font-size: 0.9rem;
+    }
+    .result-item { margin-bottom: 12px; }
+    .result-label { font-size: 0.75rem; color: var(--md-sys-color-outline); text-transform: uppercase; letter-spacing: 0.5px; }
+    .result-value { margin-top: 2px; }
     pre {
       margin: 12px 0 0;
       border-radius: 8px;
       background: #1d1b20;
       color: #e8def8;
       padding: 10px;
-      min-height: 72px;
+      min-height: 40px;
       overflow: auto;
       white-space: pre-wrap;
+      font-size: 0.8rem;
+    }
+    .status-msg {
+      font-size: 0.85rem;
+      color: var(--md-sys-color-outline);
+      text-align: center;
+      margin-top: 8px;
     }
   </style>
 </head>
@@ -116,40 +174,77 @@
         <input id="paperUrl" type="url" placeholder="https://arxiv.org/abs/..." />
         <button id="goBtn" class="go-btn">Go</button>
       </div>
-      <pre id="output">Enter a URL, open Settings to set your key, then press Go.</pre>
+
+      <div id="progressContainer" class="progress-container">
+        <div class="progress-bar indeterminate"></div>
+      </div>
+      <div id="statusMsg" class="status-msg">Enter a URL to begin analysis</div>
+
+      <div id="resultView" class="result-view">
+        <div class="result-header">Analysis Result</div>
+        <div class="result-card">
+          <div class="result-item">
+            <div class="result-label">Title</div>
+            <div id="resTitle" class="result-value"></div>
+          </div>
+          <div class="result-item">
+            <div class="result-label">DOI</div>
+            <div id="resDoi" class="result-value"></div>
+          </div>
+          <div class="result-item">
+            <div class="result-label">Notes</div>
+            <div id="resNotes" class="result-value"></div>
+          </div>
+        </div>
+      </div>
+
+      <pre id="debugOutput" style="display:none"></pre>
     </section>
   </main>
   <script>
     const settingsPanel = document.getElementById("settingsPanel");
+    const progressContainer = document.getElementById("progressContainer");
+    const statusMsg = document.getElementById("statusMsg");
+    const resultView = document.getElementById("resultView");
+    const debugOutput = document.getElementById("debugOutput");
+
     document.getElementById("settingsBtn").addEventListener("click", () => {
       settingsPanel.classList.toggle("open");
     });
 
     document.getElementById("goBtn").addEventListener("click", async () => {
-      const output = document.getElementById("output");
       const apiKey = document.getElementById("apiKey").value.trim();
       const paperUrl = document.getElementById("paperUrl").value.trim();
+      
       if (!apiKey) {
-        output.textContent = "Open Settings and add your OpenRouter API key.";
+        statusMsg.textContent = "Open Settings and add your API key.";
         return;
       }
       if (!paperUrl) {
-        output.textContent = "Enter a paper URL.";
+        statusMsg.textContent = "Please enter a paper URL.";
         return;
       }
-      output.textContent = "Running…";
+
+      // Reset UI
+      statusMsg.textContent = "Consulting OpenRouter...";
+      progressContainer.classList.add("active");
+      resultView.classList.remove("active");
+      debugOutput.style.display = "none";
+
       try {
         const body = {
           model: "minimax/minimax-m2.5",
           messages: [{
             role: "user",
             content:
-              "You are an academic paper tracker assistant. A user wants to track this paper URL: " +
-              paperUrl +
-              ". Return JSON with fields title, doi, source, notes. Keep notes to 2 short bullets."
+              "You are an academic paper tracker assistant. A user wants to track this paper: " + paperUrl + 
+              "\n\nIMPORTANT: Do not use any tools. Use your internal knowledge to identify this paper from its URL." +
+              "\n\nReturn ONLY a valid JSON object with these fields: title, doi, source, notes. " +
+              "Keep notes as an array of 2 short strings. No preamble, no markdown formatting."
           }],
           temperature: 0.1
         };
+
         const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -158,10 +253,42 @@
           },
           body: JSON.stringify(body)
         });
+
         const data = await resp.json();
-        output.textContent = data?.choices?.[0]?.message?.content ?? JSON.stringify(data, null, 2);
+        const content = data?.choices?.[0]?.message?.content;
+
+        if (!content) {
+          throw new Error("No response from LLM");
+        }
+
+        // Try to parse JSON
+        let json;
+        try {
+          // Clean possible markdown fences
+          const cleanContent = content.replace(/```json|```/g, "").trim();
+          json = JSON.parse(cleanContent);
+        } catch (e) {
+          statusMsg.textContent = "Failed to parse result. See raw output below.";
+          debugOutput.textContent = content;
+          debugOutput.style.display = "block";
+          return;
+        }
+
+        // Show result
+        document.getElementById("resTitle").textContent = json.title || "Unknown Title";
+        document.getElementById("resDoi").textContent = json.doi || "N/A";
+        const notesList = Array.isArray(json.notes) ? json.notes : [json.notes];
+        document.getElementById("resNotes").innerHTML = notesList.map(n => `• ${n}`).join("<br>");
+        
+        statusMsg.textContent = "Analysis complete";
+        resultView.classList.add("active");
+
       } catch (err) {
-        output.textContent = String(err);
+        statusMsg.textContent = "Error: " + err.message;
+        debugOutput.textContent = String(err);
+        debugOutput.style.display = "block";
+      } finally {
+        progressContainer.classList.remove("active");
       }
     });
 
