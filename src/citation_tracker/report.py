@@ -110,12 +110,27 @@ def render_full_report_html(markdown_content: str) -> str:
 
     html_body = markdown.markdown(markdown_content, extensions=["extra", "toc"])
 
+    # Mermaid JS requires the graph to be inside a div with class "mermaid"
+    # We replace the markdown-generated <pre><code class="language-mermaid">...</code></pre> 
+    # with the simple <div class="mermaid">...</div>
+    import re
+    html_body = re.sub(
+        r'<pre><code class="language-mermaid">(.*?)</code></pre>',
+        r'<div class="mermaid">\1</div>',
+        html_body,
+        flags=re.DOTALL
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Citation Tracker Report</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({{ startOnLoad: true }});
+    </script>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;

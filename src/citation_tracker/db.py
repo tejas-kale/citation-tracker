@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -61,7 +64,20 @@ def init_db(db_path: Path) -> None:
                 text_extracted      INTEGER NOT NULL DEFAULT 0,
                 created_at          TEXT NOT NULL
             );
+            """
+        )
+        
+        # Migration: Add ads_bibcode column if it doesn't exist
+        # (This is needed for existing databases created before the ADS integration)
+        for table in ["tracked_papers", "citing_papers"]:
+            cursor = conn.execute(f"PRAGMA table_info({table})")
+            columns = [r[1] for r in cursor.fetchall()]
+            if "ads_bibcode" not in columns:
+                logger.info("Migrating database: adding ads_bibcode to %s", table)
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN ads_bibcode TEXT")
 
+        conn.executescript(
+            """
             CREATE TABLE IF NOT EXISTS analyses (
                 id                      TEXT PRIMARY KEY,
                 citing_paper_id         TEXT NOT NULL REFERENCES citing_papers(id),
