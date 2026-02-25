@@ -15,13 +15,29 @@ def _build_influence_graph(
     tracked_title: str,
     analyses: list[sqlite3.Row],
 ) -> str:
-    lines = ["```mermaid", "graph TD", '  T["Tracked: ' + tracked_title.replace('"', '\\"') + '"]']
-    for idx, analysis in enumerate(analyses, 1):
-        node = f"C{idx}"
-        citing_title = (analysis["citing_title"] or "Untitled").replace('"', '\\"')
-        relation = analysis["relationship_type"] or "neutral"
-        lines.append(f'  {node}["{citing_title}"]')
-        lines.append(f"  T -->|{relation}| {node}")
+    lines = ["```mermaid", "graph LR", '  T["Tracked: ' + tracked_title.replace('"', '\\"') + '"]']
+    
+    # Group analyses by relationship type
+    categories: dict[str, list[sqlite3.Row]] = {}
+    for a in analyses:
+        rel = a["relationship_type"] or "neutral"
+        categories.setdefault(rel, []).append(a)
+
+    for rel, papers in categories.items():
+        lines.append(f"  subgraph {rel.upper()}")
+        for idx, a in enumerate(papers):
+            # Unique ID for node
+            node_id = f"P_{hash(a['id']) % 10000}"
+            title = (a["citing_title"] or "Untitled").replace('"', '\\"')
+            doi = a["citing_doi"] or "No DOI"
+            # Get one line summary (first sentence or truncated)
+            summary = (a["summary"] or "").split(".")[0].replace('"', '\\"')[:100] + "..."
+            
+            label = f'"{title}<br/><i>{doi}</i><br/><small>{summary}</small>"'
+            lines.append(f"    {node_id}[{label}]")
+            lines.append(f"    T -->|{rel}| {node_id}")
+        lines.append("  end")
+        
     lines.append("```")
     return "\n".join(lines)
 
@@ -55,8 +71,9 @@ def build_report(
 
     if analyses:
         lines.append(f"## New Citing Papers ({len(analyses)} analysed)\n")
-        lines.append("## Influence Tree\n")
+        lines.append("<details>\n<summary><b>View Influence Tree (Categorized Chart)</b></summary>\n")
         lines.append(_build_influence_graph(title, analyses))
+        lines.append("</details>\n")
         lines.append("")
         for a in analyses:
             lines.append(f"### {a['citing_title'] or 'Untitled'}")
@@ -129,7 +146,12 @@ def render_full_report_html(markdown_content: str) -> str:
     <title>Citation Tracker Report</title>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script>
-        mermaid.initialize({{ startOnLoad: true }});
+        mermaid.initialize({{ 
+            startOnLoad: true,
+            securityLevel: 'loose',
+            theme: 'neutral',
+            flowchart: {{ useMaxWidth: false, htmlLabels: true }}
+        }});
     </script>
     <style>
         body {{
@@ -153,6 +175,27 @@ def render_full_report_html(markdown_content: str) -> str:
         code {{ background: #f4f4f4; padding: 2px 4px; border-radius: 4px; }}
         hr {{ border: 0; border-top: 2px solid #eee; margin: 40px 0; }}
         .metadata {{ color: #666; font-style: italic; }}
+        .mermaid {{ 
+            width: 100% !important; 
+            max-width: 100% !important;
+            min-height: 600px;
+            margin: 20px 0;
+            background: #fff;
+            padding: 20px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+        }}
+        details {{
+            margin: 20px 0;
+            padding: 15px;
+            background: #f0f4f8;
+            border-radius: 8px;
+            cursor: pointer;
+        }}
+        summary {{
+            font-size: 1.1rem;
+            color: #2c5282;
+        }}
     </style>
 </head>
 <body>
