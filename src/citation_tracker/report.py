@@ -11,6 +11,21 @@ def _format_authors(authors: str | None) -> str:
     return authors or "Unknown authors"
 
 
+def _build_influence_graph(
+    tracked_title: str,
+    analyses: list[sqlite3.Row],
+) -> str:
+    lines = ["```mermaid", "graph TD", '  T["Tracked: ' + tracked_title.replace('"', '\\"') + '"]']
+    for idx, analysis in enumerate(analyses, 1):
+        node = f"C{idx}"
+        citing_title = (analysis["citing_title"] or "Untitled").replace('"', '\\"')
+        relation = analysis["relationship_type"] or "neutral"
+        lines.append(f'  {node}["{citing_title}"]')
+        lines.append(f"  T -->|{relation}| {node}")
+    lines.append("```")
+    return "\n".join(lines)
+
+
 def build_report(
     tracked_paper: sqlite3.Row,
     analyses: list[sqlite3.Row],
@@ -38,6 +53,9 @@ def build_report(
 
     if analyses:
         lines.append(f"## New Citing Papers ({len(analyses)} analysed)\n")
+        lines.append("## Influence Tree\n")
+        lines.append(_build_influence_graph(title, analyses))
+        lines.append("")
         for a in analyses:
             lines.append(f"### {a['citing_title'] or 'Untitled'}")
             lines.append(

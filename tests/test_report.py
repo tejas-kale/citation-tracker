@@ -32,6 +32,8 @@ def test_build_report(mock_tracked_paper, mock_analyses):
     report = build_report(mock_tracked_paper, mock_analyses, [])
     assert "# Citation Report: Main Paper" in report
     assert "*Author 1*" in report
+    assert "```mermaid" in report
+    assert "T -->|supports| C1" in report
     assert "### Citing A" in report
     assert "**Relationship:** `supports`" in report
 
