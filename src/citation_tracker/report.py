@@ -47,12 +47,12 @@ def build_report(
     if analyses:
         lines.append(f"## Individual Citing Papers ({len(analyses)} analysed)\n")
         for a in analyses:
-            lines.append("<details>")
+            lines.append("<details markdown=\"1\">")
             lines.append(f"<summary><b>{a['citing_title'] or 'Untitled'}</b> ({a['citing_year'] or 'N/A'})</summary>\n")
             lines.append(
-                f"**Authors:** {_format_authors(a['citing_authors'])}  "
-                f"**Year:** {a['citing_year'] or 'N/A'}  "
-                f"**DOI:** {a['citing_doi'] or 'N/A'}"
+                f"**Authors:** {_format_authors(a['citing_authors'])}  \n"
+                f"**Year:** {a['citing_year'] or 'N/A'}  \n"
+                f"**DOI:** {a['citing_doi'] or 'N/A'}\n"
             )
             lines.append(f"\n**Relationship:** `{a['relationship_type'] or 'N/A'}`\n")
             if a["summary"]:
@@ -65,7 +65,7 @@ def build_report(
                 lines.append(f"**Assumptions Questioned:** {a['assumptions_questioned']}\n")
             if a["other_notes"]:
                 lines.append(f"**Other Notes:** {a['other_notes']}\n")
-            lines.append("</details>")
+            lines.append("\n</details>")
             lines.append("")
     else:
         lines.append("## No new analysed citations in this run.\n")
