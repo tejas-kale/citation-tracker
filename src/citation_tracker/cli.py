@@ -157,9 +157,10 @@ def _resolve_paper(
         
         query = _clean_query(title_guess)
         
-        # If filename is very short (like 'jmp.pdf'), try to download and peek at content
+        # If filename is short or looks like an ID (like 'jmp.pdf' or 'aa50011-24.pdf'),
+        # try to download and peek at content
         pdf_text = None
-        if len(title_guess) < 10:
+        if len(title_guess) < 30:
             from citation_tracker.fetcher import download_pdf
             from citation_tracker.parser import extract_text
             import tempfile
