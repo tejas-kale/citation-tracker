@@ -15,7 +15,12 @@ def _build_influence_graph(
     tracked_title: str,
     analyses: list[sqlite3.Row],
 ) -> str:
-    lines = ["```mermaid", "graph TD", '  T["Tracked: ' + tracked_title.replace('"', '\\"') + '"]']
+    # Helper to wrap text for mermaid nodes
+    def wrap_text(text: str, width: int = 40) -> str:
+        import textwrap
+        return "<br/>".join(textwrap.wrap(text, width))
+
+    lines = ["```mermaid", "graph TD", '  T["' + wrap_text("Tracked: " + tracked_title) + '"]']
     
     # Group analyses by relationship type
     categories: dict[str, list[sqlite3.Row]] = {}
@@ -27,17 +32,23 @@ def _build_influence_graph(
         rel_node = f"REL_{rel.upper()}"
         lines.append(f'  {rel_node}[["{rel.upper()}"]]')
         lines.append(f"  T --- {rel_node}")
+        
+        prev_node_id = None
         for idx, a in enumerate(papers):
-            # Unique ID for node
             node_id = f"P_{hash(a['id']) % 10000}"
-            title = (a["citing_title"] or "Untitled").replace('"', '\\"')
+            title = wrap_text(a["citing_title"] or "Untitled", width=50)
             doi = a["citing_doi"] or "No DOI"
-            # Get one line summary (first sentence or truncated)
-            summary = (a["summary"] or "").split(".")[0].replace('"', '\\"')[:100] + "..."
+            # Get one line summary
+            summary = wrap_text((a["summary"] or "").split(".")[0], width=60)[:150] + "..."
             
             label = f'"{title}<br/><i>{doi}</i><br/><small>{summary}</small>"'
             lines.append(f"    {node_id}[{label}]")
             lines.append(f"    {rel_node} --> {node_id}")
+            
+            # Invisible edge to force vertical stacking
+            if prev_node_id:
+                lines.append(f"    {prev_node_id} ~~~ {node_id}")
+            prev_node_id = node_id
         
     lines.append("  linkStyle default stroke:#cbd5e0,stroke-width:2px,fill:none")
     lines.append("  style T fill:#edf2f7,stroke:#2d3748,stroke-width:2px")
