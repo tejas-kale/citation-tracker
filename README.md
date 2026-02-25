@@ -17,8 +17,8 @@ uv tool install --editable .
 ### Add a paper to track
 
 ```bash
-# Add by PDF URL (metadata fetched automatically)
-citation-tracker add "https://example.com/paper.pdf"
+# Add by URL (handles arXiv, DOIs, and peeks into PDF for ambiguous filenames)
+citation-tracker add "https://ericnrobertson.github.io/files/jmp.pdf"
 
 # Add by DOI
 citation-tracker add --doi 10.xxxx/xxxxx
@@ -30,7 +30,7 @@ citation-tracker add --ss-id 12345678
 ### List tracked papers and citations
 
 ```bash
-# List all papers you are tracking
+# List all papers you are tracking (shows IDs and DOI/URL)
 citation-tracker list
 
 # List citations for a specific paper
@@ -43,11 +43,11 @@ citation-tracker citations --id <ID>
 # Process all active tracked papers
 citation-tracker run
 
-# Process a single paper
-citation-tracker run --id <ID>
+# Process a single paper by numeric ID or DOI
+citation-tracker run --id <ID|DOI>
 
-# Use a specific LLM backend
-citation-tracker run --backend claude_code
+# Specify number of concurrent workers
+citation-tracker run --workers 12
 ```
 
 ### Manage tracked papers
@@ -76,24 +76,26 @@ citation-tracker ingest path/to/paper.pdf --id <ID>
 # Show current status summary
 citation-tracker status
 
-# Show analysis report for a specific paper (renders in terminal with glow/rich)
+# Show analysis report for a specific paper
 citation-tracker show --id <ID>
 ```
 
 Reports are automatically generated as HTML files in `~/.citation-tracker/reports/` after each `run`.
-Reports now include a Mermaid influence tree graph per tracked paper.
+Reports feature an **interactive Mermaid.js influence tree** that categorizes citations (EXTENDS, CHALLENGES, USES, etc.) in a vertical, directory-style layout.
 
 ### Simple PWA (fresh run, no persistence)
 
-Open `src/pwa/index.html` in a browser (or serve `src/pwa/` with any static file server) to use a very simple one-off web app: set OpenRouter API key in Settings, enter one paper URL, and press Go.
-This app is deployed to GitHub Pages via `.github/workflows/pages.yml` (on pushes to `main`).
+A lightweight PWA is available at `src/pwa/index.html`. It features a progress bar and structured result view for quick paper lookups via OpenRouter.
+This app is deployed to GitHub Pages via `.github/workflows/pages.yml`.
 
 ## Configuration
 
 All data is stored in `~/.citation-tracker/` by default.
 
-1. Copy `.env.example` to `.env` and fill in your `OPENROUTER_API_KEY`.
-2. Edit `config.yaml` to change the default model or data directory if needed.
+1. Copy `.env.example` to `.env` and fill in:
+   - `OPENROUTER_API_KEY`: Required for LLM analysis.
+   - `ADS_DEV_KEY`: Optional, for NASA ADS discovery (Astronomy/Physics).
+2. Edit `config.yaml` to change the default model, worker count, or data directory.
 
 ## Cron setup
 
@@ -108,16 +110,16 @@ To run the tracker automatically every Saturday at 7:00 AM:
 ```
 citation-tracker/
 ├── src/
-│   └── citation_tracker/
-│       ├── cli.py          # Click entry point
-│       ├── config.py       # Config loading
-│       ├── db.py           # SQLite schema and short UUIDs
-│       ├── sources/        # Semantic Scholar + OpenAlex clients
-│       ├── fetcher.py      # PDF download (Unpaywall)
-│       ├── parser.py       # PDF text extraction (PyMuPDF4LLM)
-│       ├── analyser.py     # LLM analysis orchestration
-│       ├── backends/       # OpenRouter + Claude Code backends
-│       └── report.py       # Markdown & HTML report assembly
+│   ├── citation_tracker/
+│   │   ├── cli.py          # Click entry point & ThreadPoolExecutor
+│   │   ├── config.py       # Config loading & ADS/OpenRouter settings
+│   │   ├── db.py           # SQLite schema, short UUIDs & migrations
+│   │   ├── sources/        # API clients: SS, OpenAlex, NASA ADS, Deduplicator
+│   │   ├── fetcher.py      # PDF download (Unpaywall, ADS Gateway, arXiv)
+│   │   ├── parser.py       # PDF text extraction (PyMuPDF4LLM)
+│   │   ├── analyser.py     # LLM analysis & Map-Reduce orchestration
+│   │   └── report.py       # Markdown & HTML report assembly (Mermaid.js)
+│   └── pwa/                # Standalone lookup tool
 ├── config.yaml
 ├── .env.example
 └── pyproject.toml
