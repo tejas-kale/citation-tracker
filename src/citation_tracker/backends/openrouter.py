@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from openai import OpenAI
@@ -13,6 +14,21 @@ from citation_tracker.config import OpenRouterConfig
 logger = logging.getLogger(__name__)
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def _parse_json_response(raw: str) -> dict[str, Any]:
+    """Parse a JSON dict from a raw LLM response string.
+
+    Handles plain JSON and JSON wrapped in markdown code fences.
+    Raises ValueError if no valid JSON dict can be extracted.
+    """
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        raise ValueError(f"Could not parse JSON from OpenRouter response: {raw[:200]}")
 
 
 def analyse(
@@ -38,13 +54,4 @@ def analyse(
     raw = response.choices[0].message.content or ""
     logger.debug("OpenRouter raw response: %s", raw[:200])
 
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        # Try to extract JSON block from markdown code fences
-        import re
-
-        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
-        if match:
-            return json.loads(match.group(1))
-        raise ValueError(f"Could not parse JSON from OpenRouter response: {raw[:200]}")
+    return _parse_json_response(raw)

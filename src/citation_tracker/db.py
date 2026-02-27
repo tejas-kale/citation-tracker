@@ -23,6 +23,13 @@ def _generate_id() -> str:
     return uuid.uuid4().hex[:8]
 
 
+def _serialise_authors(authors: Any) -> str | None:
+    """Serialise authors to a string, JSON-encoding lists/dicts."""
+    if isinstance(authors, (list, dict)):
+        return json.dumps(authors)
+    return authors
+
+
 def init_db(db_path: Path) -> None:
     """Initialise the database, creating tables if they don't exist."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,7 +145,7 @@ def insert_tracked_paper(conn: sqlite3.Connection, paper: dict[str, Any]) -> str
             "id": paper_id,
             "doi": paper.get("doi"),
             "title": paper.get("title"),
-            "authors": json.dumps(paper.get("authors")) if isinstance(paper.get("authors"), (list, dict)) else paper.get("authors"),
+            "authors": _serialise_authors(paper.get("authors")),
             "year": paper.get("year"),
             "abstract": paper.get("abstract"),
             "source_url": paper.get("source_url"),
@@ -157,13 +164,9 @@ def get_tracked_paper_by_doi(conn: sqlite3.Connection, doi: str) -> sqlite3.Row 
     ).fetchone()
 
 
-def get_tracked_paper_by_ss_id(conn: sqlite3.Connection, ss_id: str) -> sqlite3.Row | None:
-    return conn.execute(
-        "SELECT * FROM tracked_papers WHERE ss_id = ?", (ss_id,)
-    ).fetchone()
-
-
-def get_tracked_paper_by_id(conn: sqlite3.Connection, paper_id: str) -> sqlite3.Row | None:
+def get_tracked_paper_by_id(
+    conn: sqlite3.Connection, paper_id: str
+) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT * FROM tracked_papers WHERE id = ?", (paper_id,)
     ).fetchone()
@@ -240,7 +243,7 @@ def upsert_citing_paper(
             "tracked_paper_id": tracked_paper_id,
             "doi": paper.get("doi"),
             "title": paper.get("title"),
-            "authors": json.dumps(paper.get("authors")) if isinstance(paper.get("authors"), (list, dict)) else paper.get("authors"),
+            "authors": _serialise_authors(paper.get("authors")),
             "year": paper.get("year"),
             "abstract": paper.get("abstract"),
             "ss_id": paper.get("ss_id"),
@@ -257,7 +260,8 @@ def get_citing_papers_pending_pdf(
     conn: sqlite3.Connection, tracked_paper_id: str
 ) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT * FROM citing_papers WHERE tracked_paper_id = ? AND pdf_status = 'pending'",
+        "SELECT * FROM citing_papers"
+        " WHERE tracked_paper_id = ? AND pdf_status = 'pending'",
         (tracked_paper_id,),
     ).fetchall()
 
@@ -279,10 +283,14 @@ def get_citing_papers_for_analysis(
 
 
 def update_citing_paper_pdf(
-    conn: sqlite3.Connection, citing_paper_id: str, status: str, pdf_url: str | None = None
+    conn: sqlite3.Connection,
+    citing_paper_id: str,
+    status: str,
+    pdf_url: str | None = None,
 ) -> None:
     conn.execute(
-        "UPDATE citing_papers SET pdf_status = ?, pdf_url = COALESCE(?, pdf_url) WHERE id = ?",
+        "UPDATE citing_papers SET pdf_status = ?, pdf_url = COALESCE(?, pdf_url)"
+        " WHERE id = ?",
         (status, pdf_url, citing_paper_id),
     )
 
@@ -294,15 +302,6 @@ def update_citing_paper_text(
         "UPDATE citing_papers SET extracted_text = ?, text_extracted = 1 WHERE id = ?",
         (text, citing_paper_id),
     )
-
-
-def get_citing_paper_by_doi(
-    conn: sqlite3.Connection, tracked_paper_id: str, doi: str
-) -> sqlite3.Row | None:
-    return conn.execute(
-        "SELECT * FROM citing_papers WHERE tracked_paper_id = ? AND doi = ?",
-        (tracked_paper_id, doi),
-    ).fetchone()
 
 
 def list_citing_papers(
@@ -415,7 +414,9 @@ def finish_run(
 
 
 def db_summary(conn: sqlite3.Connection) -> dict[str, Any]:
-    tracked = conn.execute("SELECT COUNT(*) FROM tracked_papers WHERE active=1").fetchone()[0]
+    tracked = conn.execute(
+        "SELECT COUNT(*) FROM tracked_papers WHERE active=1"
+    ).fetchone()[0]
     total_citing = conn.execute("SELECT COUNT(*) FROM citing_papers").fetchone()[0]
     pending_pdf = conn.execute(
         "SELECT COUNT(*) FROM citing_papers WHERE pdf_status='pending'"

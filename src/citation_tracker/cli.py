@@ -3,17 +3,41 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
+import shutil
+import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
 import click
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.table import Table
 
 from citation_tracker.config import load_config
+from citation_tracker.db import (
+    db_summary,
+    delete_tracked_paper,
+    finish_run,
+    get_conn,
+    get_tracked_paper_by_doi,
+    get_tracked_paper_by_id,
+    init_db,
+    insert_run,
+    insert_tracked_paper,
+    list_analyses,
+    list_citing_papers,
+    list_tracked_papers,
+    set_tracked_paper_active,
+    upsert_citing_paper,
+    update_citing_paper_pdf,
+    update_citing_paper_text,
+)
+from citation_tracker.resolver import resolve_paper
+from citation_tracker.pipeline import process_paper
+from citation_tracker.report import build_report
+from citation_tracker.analyser import generate_scholarly_synthesis
+from citation_tracker.fetcher import _doi_to_path
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -25,8 +49,6 @@ def _setup_logging(verbose: bool) -> None:
 
 
 def _get_db(cfg: Any) -> Path:
-    from citation_tracker.db import init_db
-
     cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
     init_db(cfg.db_path)
     return cfg.db_path
@@ -34,18 +56,12 @@ def _get_db(cfg: Any) -> Path:
 
 def _print_markdown(content: str) -> None:
     """Print Markdown content using glow (if available) or rich."""
-    import shutil
-    import subprocess
-
     if shutil.which("glow"):
         try:
             subprocess.run(["glow", "-"], input=content.encode(), check=True)
             return
         except Exception:
             pass
-
-    from rich.markdown import Markdown
-
     console.print(Markdown(content))
 
 
@@ -54,7 +70,12 @@ def _print_markdown(content: str) -> None:
 @click.option("--env", "env_path", default=None, help="Path to .env file")
 @click.option("--verbose", is_flag=True, default=False)
 @click.pass_context
-def main(ctx: click.Context, config_path: str | None, env_path: str | None, verbose: bool) -> None:
+def main(
+    ctx: click.Context,
+    config_path: str | None,
+    env_path: str | None,
+    verbose: bool,
+) -> None:
     """Citation Tracker — track and analyse citations of academic papers."""
     _setup_logging(verbose)
     ctx.ensure_object(dict)
@@ -73,17 +94,17 @@ def main(ctx: click.Context, config_path: str | None, env_path: str | None, verb
 @click.option("--doi", default=None, help="DOI of the paper to track")
 @click.option("--ss-id", default=None, help="Semantic Scholar paper ID")
 @click.pass_context
-def add_paper(ctx: click.Context, url: str | None, doi: str | None, ss_id: str | None) -> None:
+def add_paper(
+    ctx: click.Context, url: str | None, doi: str | None, ss_id: str | None
+) -> None:
     """Add a paper to track by URL, DOI, or Semantic Scholar ID."""
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
-    paper = _resolve_paper(url=url, doi=doi, ss_id=ss_id, cfg=cfg)
+    paper = resolve_paper(url=url, doi=doi, ss_id=ss_id, cfg=cfg)
     if paper is None:
         console.print("[red]Could not resolve paper metadata.[/red]")
         sys.exit(1)
-
-    from citation_tracker.db import get_conn, get_tracked_paper_by_doi, insert_tracked_paper
 
     with get_conn(db_path) as conn:
         if paper.get("doi"):
@@ -95,161 +116,9 @@ def add_paper(ctx: click.Context, url: str | None, doi: str | None, ss_id: str |
                 return
 
         paper_id = insert_tracked_paper(conn, paper)
-        console.print(f"[green]Added paper (id={paper_id}): {paper.get('title', 'N/A')}[/green]")
-
-
-def _clean_query(text: str, max_len: int = 200) -> str:
-    """Clean extracted text for use as a search query (remove Markdown, normalize space)."""
-    import re
-    # Remove markdown formatting (headers, bold, links)
-    text = re.sub(r"[#*_\[\]()]", " ", text)
-    # Normalize whitespace
-    text = re.sub(r"\s+", " ", text).strip()
-    return text[:max_len]
-
-
-def _resolve_paper(
-    url: str | None, doi: str | None, ss_id: str | None, cfg: Any
-) -> dict[str, Any] | None:
-    from citation_tracker.sources import semantic_scholar as ss
-    from citation_tracker.sources import openalexapi as oa
-    from citation_tracker.sources import adsapi as ads
-
-    if doi:
-        paper_ss = ss.get_paper_by_doi(doi)
-        paper_oa = oa.get_paper_by_doi(doi)
-        paper_ads = ads.get_paper_by_doi(doi, cfg.ads.api_key)
-        
-        if not paper_ss and not paper_oa and not paper_ads:
-            return None
-            
-        # Merge results
-        # Prioritize SS for abstract, ADS for bibcode
-        best = paper_ss or paper_oa or paper_ads
-        merged = {
-            "title": (paper_ss or {}).get("title") or (paper_oa or {}).get("title") or (paper_ads or {}).get("title"),
-            "authors": (paper_ss or {}).get("authors") or (paper_oa or {}).get("authors") or (paper_ads or {}).get("authors"),
-            "year": (paper_ss or {}).get("year") or (paper_oa or {}).get("year") or (paper_ads or {}).get("year"),
-            "abstract": (paper_ss or {}).get("abstract") or (paper_oa or {}).get("abstract") or (paper_ads or {}).get("abstract"),
-            "doi": doi,
-            "ss_id": (paper_ss or {}).get("ss_id"),
-            "oa_id": (paper_oa or {}).get("oa_id"),
-            "ads_bibcode": (paper_ads or {}).get("ads_bibcode"),
-            "pdf_url": (paper_ss or {}).get("pdf_url") or (paper_oa or {}).get("pdf_url") or (paper_ads or {}).get("pdf_url"),
-        }
-        
-        merged["source_url"] = None
-        return merged
-
-    if ss_id:
-        paper = ss.get_paper_by_id(ss_id)
-        if paper:
-            paper["source_url"] = None
-        return paper
-
-    if url:
-        import re
-        # Try to extract DOI from URL
-        doi_match = re.search(r"10\.\d{4,}/[^\s\"'<>]+", url)
-        if doi_match:
-            return _resolve_paper(url=None, doi=doi_match.group(), ss_id=None, cfg=cfg)
-        
-        # Try to extract arXiv ID from URL
-        arxiv_match = re.search(r"(\d{4}\.\d{4,5}(v\d+)?|arxiv:[a-z\-]+(\.[a-z\-]+)?/\d{7})", url.lower())
-        if arxiv_match:
-            arxiv_id = arxiv_match.group(1)
-            paper = ss.get_paper_by_arxiv(arxiv_id)
-            if paper is None:
-                paper = oa.get_paper_by_arxiv(arxiv_id)
-            if paper:
-                paper["source_url"] = url
-                return paper
-
-        # Attempt to download PDF and search by content if filename is short/ambiguous
-        filename = Path(url).name
-        # Remove common extensions
-        title_guess = filename
-        for ext in [".pdf", ".html", ".htm"]:
-            if title_guess.lower().endswith(ext):
-                title_guess = title_guess[:-len(ext)]
-        title_guess = title_guess.replace("_", " ").replace("-", " ")
-        
-        query = _clean_query(title_guess)
-        
-        # If filename is short or looks like an ID (like 'jmp.pdf' or 'aa50011-24.pdf'),
-        # try to download and peek at content
-        pdf_text = None
-        if len(title_guess) < 30:
-            from citation_tracker.fetcher import download_pdf
-            from citation_tracker.parser import extract_text
-            import tempfile
-            
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmp_path = download_pdf(url, Path(tmpdir), filename_hint="resolve")
-                if tmp_path:
-                    pdf_text = extract_text(tmp_path)
-                    if pdf_text:
-                        query = _clean_query(pdf_text, max_len=200)
-
-        paper = ss.search_paper_by_query(query)
-        if paper is None:
-            paper = oa.search_paper_by_query(query)
-        if paper is None:
-            paper = ads.search_paper_by_query(query, cfg.ads.api_key)
-            
-        if paper:
-            # If we found a DOI, re-resolve to merge both SS and OA metadata
-            if paper.get("doi"):
-                official = _resolve_paper(url=None, doi=paper["doi"], ss_id=None, cfg=cfg)
-                if official:
-                    official["source_url"] = url
-                    return official
-            paper["source_url"] = url
-        elif pdf_text:
-            # API search failed but we have text! Use LLM to extract metadata.
-            from citation_tracker.analyser import parse_paper_metadata
-            try:
-                console.print(f"  API search failed. Extracting metadata from PDF using LLM...")
-                extracted = parse_paper_metadata(pdf_text, cfg)
-                
-                # If LLM found a DOI, try to re-resolve using the DOI to get official IDs
-                if extracted.get("doi"):
-                    console.print(f"  LLM extracted DOI: {extracted['doi']}. Re-resolving...")
-                    official = _resolve_paper(url=None, doi=extracted["doi"], ss_id=None, cfg=cfg)
-                    if official:
-                        official["source_url"] = url
-                        return official
-
-                paper = {
-                    "doi": extracted.get("doi"),
-                    "title": extracted.get("title") or title_guess,
-                    "authors": extracted.get("authors"),
-                    "year": extracted.get("year"),
-                    "abstract": extracted.get("abstract"),
-                    "source_url": url,
-                    "ss_id": None,
-                    "oa_id": None,
-                    "pdf_url": url,
-                }
-            except Exception as exc:
-                logger.warning("LLM metadata extraction failed: %s", exc)
-
-        if paper is None:
-            # Create a stub entry with just the URL
-            paper = {
-                "doi": None,
-                "title": title_guess,
-                "authors": None,
-                "year": None,
-                "abstract": None,
-                "source_url": url,
-                "ss_id": None,
-                "oa_id": None,
-                "pdf_url": url,
-            }
-        return paper
-
-    return None
+        console.print(
+            f"[green]Added paper (id={paper_id}): {paper.get('title', 'N/A')}[/green]"
+        )
 
 
 # ── list ───────────────────────────────────────────────────────────────────
@@ -261,8 +130,6 @@ def list_papers(ctx: click.Context) -> None:
     """List all tracked papers."""
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
-
-    from citation_tracker.db import get_conn, list_tracked_papers
 
     with get_conn(db_path) as conn:
         papers = list_tracked_papers(conn)
@@ -280,7 +147,6 @@ def list_papers(ctx: click.Context) -> None:
     table.add_column("Added")
 
     for p in papers:
-        # Use DOI if available, else source_url
         location = p["doi"] or p["source_url"] or ""
         table.add_row(
             str(p["id"]),
@@ -314,15 +180,11 @@ def resume_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> N
     _set_active(ctx, paper_id, doi, active=True)
 
 
-def _set_active(ctx: click.Context, paper_id: str | None, doi: str | None, active: bool) -> None:
+def _set_active(
+    ctx: click.Context, paper_id: str | None, doi: str | None, active: bool
+) -> None:
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
-    from citation_tracker.db import (
-        get_conn,
-        get_tracked_paper_by_doi,
-        get_tracked_paper_by_id,
-        set_tracked_paper_active,
-    )
 
     with get_conn(db_path) as conn:
         paper = None
@@ -330,11 +192,11 @@ def _set_active(ctx: click.Context, paper_id: str | None, doi: str | None, activ
             paper = get_tracked_paper_by_id(conn, paper_id)
         elif doi:
             paper = get_tracked_paper_by_doi(conn, doi)
-        
+
         if paper is None:
-            console.print(f"[red]Paper not found.[/red]")
+            console.print("[red]Paper not found.[/red]")
             sys.exit(1)
-            
+
         set_tracked_paper_active(conn, paper["id"], active)
         action = "resumed" if active else "paused"
         console.print(f"[green]Paper {action}: {paper['title']}[/green]")
@@ -352,12 +214,6 @@ def remove_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> N
     """Remove a paper and all its data."""
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
-    from citation_tracker.db import (
-        delete_tracked_paper,
-        get_conn,
-        get_tracked_paper_by_doi,
-        get_tracked_paper_by_id,
-    )
 
     with get_conn(db_path) as conn:
         paper = None
@@ -365,11 +221,11 @@ def remove_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> N
             paper = get_tracked_paper_by_id(conn, paper_id)
         elif doi:
             paper = get_tracked_paper_by_doi(conn, doi)
-            
+
         if paper is None:
-            console.print(f"[red]Paper not found.[/red]")
+            console.print("[red]Paper not found.[/red]")
             sys.exit(1)
-            
+
         delete_tracked_paper(conn, paper["id"])
         console.print(f"[green]Removed paper: {paper['title']}[/green]")
 
@@ -377,44 +233,59 @@ def remove_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> N
 # ── run ────────────────────────────────────────────────────────────────────
 
 
+def _select_papers(conn: Any, paper_id: str | None) -> list[Any]:
+    """Return the list of papers to process for this run."""
+    if paper_id:
+        paper = get_tracked_paper_by_id(conn, paper_id)
+        if paper is None:
+            paper = get_tracked_paper_by_doi(conn, paper_id)
+        if paper is None:
+            console.print(f"[red]Paper with ID or DOI {paper_id!r} not found.[/red]")
+            sys.exit(1)
+        return [paper]
+    return list_tracked_papers(conn, active_only=True)
+
+
+def _save_reports(report_sections: list[Any], cfg: Any) -> None:
+    """Write per-paper Markdown reports to disk and print them."""
+    reports_dir = cfg.reports_dir
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    for tracked_paper, analyses_rows, failed_pdfs, scholarly_synthesis in report_sections:
+        report_md = build_report(
+            tracked_paper, analyses_rows, failed_pdfs, scholarly_synthesis
+        )
+        console.print("\n[bold]Report:[/bold]\n")
+        _print_markdown(report_md)
+
+        report_path = reports_dir / f"{tracked_paper['id']}.md"
+        report_path.write_text(report_md)
+        console.print(f"[bold green]Report saved to: {report_path}[/bold green]")
+
+
 @main.command("run")
-@click.option("--id", "paper_id", default=None, help="Process a single tracked paper by numeric ID or DOI")
-@click.option("--backend", default=None, help="Override backend (openrouter)")
-@click.option("--workers", default=8, show_default=True, type=int, help="Worker threads for fetch/parse/analyse")
+@click.option(
+    "--id", "paper_id", default=None,
+    help="Process a single tracked paper by numeric ID or DOI",
+)
+@click.option(
+    "--workers", default=8, show_default=True, type=int,
+    help="Worker threads for fetch/parse/analyse",
+)
 @click.option("--triggered-by", default="manual", hidden=True)
 @click.pass_context
 def run_pipeline(
-    ctx: click.Context, paper_id: str | None, backend: str | None, workers: int, triggered_by: str
+    ctx: click.Context,
+    paper_id: str | None,
+    workers: int,
+    triggered_by: str,
 ) -> None:
     """Run the full discovery → fetch → parse → analyse → report pipeline."""
     cfg = ctx.obj["cfg"]
-    if backend:
-        cfg.backend = backend
     db_path = _get_db(cfg)
 
-    from citation_tracker.db import (
-        finish_run,
-        get_conn,
-        get_tracked_paper_by_doi,
-        get_tracked_paper_by_id,
-        insert_run,
-        list_tracked_papers,
-    )
-
     with get_conn(db_path) as conn:
-        if paper_id:
-            # Try numeric ID/hex ID first, then fallback to DOI
-            paper = get_tracked_paper_by_id(conn, paper_id)
-            
-            if paper is None:
-                paper = get_tracked_paper_by_doi(conn, paper_id)
-
-            if paper is None:
-                console.print(f"[red]Paper with ID or DOI {paper_id!r} not found.[/red]")
-                sys.exit(1)
-            papers_to_run = [paper]
-        else:
-            papers_to_run = list_tracked_papers(conn, active_only=True)
+        papers_to_run = _select_papers(conn, paper_id)
 
         if not papers_to_run:
             console.print("[yellow]No active tracked papers to process.[/yellow]")
@@ -429,225 +300,27 @@ def run_pipeline(
 
     for paper_row in papers_to_run:
         paper_dict = dict(paper_row)
-        new, analysed, errors, section = _process_paper(paper_dict, cfg, db_path, workers=max(1, workers))
+        console.print(f"\n[bold]Processing:[/bold] {paper_dict.get('title', 'N/A')}")
+        new, analysed, errors, section = process_paper(
+            paper_dict, cfg, db_path, workers=max(1, workers)
+        )
         total_new += new
         total_analysed += analysed
         all_errors.extend(errors)
         if section:
             report_sections.append(section)
 
-    # Build and save report
     if report_sections:
-        from citation_tracker.report import build_full_report, render_full_report_html
-        from datetime import datetime
-
-        report_md = build_full_report(report_sections)
-        console.print("\n[bold]Report (Markdown):[/bold]\n")
-        _print_markdown(report_md)
-
-        # Render HTML and save to reports_dir
-        html_content = render_full_report_html(report_md)
-        
-        reports_dir = cfg.reports_dir
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_path = reports_dir / f"report_{timestamp}.html"
-        
-        with report_path.open("w") as f:
-            f.write(html_content)
-        
-        console.print(f"\n[bold green]Report saved to: {report_path}[/bold green]")
+        _save_reports(report_sections, cfg)
 
     with get_conn(db_path) as conn:
         finish_run(conn, run_id, total_new, total_analysed, all_errors)
 
     console.print(
         f"\n[bold green]Done.[/bold green] "
-        f"New papers: {total_new}, Analysed: {total_analysed}, Errors: {len(all_errors)}"
+        f"New papers: {total_new}, Analysed: {total_analysed}, "
+        f"Errors: {len(all_errors)}"
     )
-
-
-def _process_paper(
-    paper: dict[str, Any],
-    cfg: Any,
-    db_path: Path,
-    workers: int = 8,
-) -> tuple[int, int, list[str], Any]:
-    """Run the pipeline for one tracked paper. Returns (new, analysed, errors, report_section)."""
-    from citation_tracker.db import (
-        finish_run,
-        get_citing_papers_for_analysis,
-        get_citing_papers_pending_pdf,
-        get_conn,
-        insert_analysis,
-        list_citing_papers,
-        update_citing_paper_pdf,
-        update_citing_paper_text,
-        upsert_citing_paper,
-    )
-    from citation_tracker.sources import semantic_scholar as ss
-    from citation_tracker.sources import openalexapi as oa
-    from citation_tracker.sources.deduplicator import deduplicate
-    from citation_tracker.fetcher import scan_manual_dir, try_download_citing_paper
-    from citation_tracker.parser import extract_text
-    from citation_tracker.analyser import analyse_citing_paper
-    from citation_tracker.report import build_report
-
-    tracked_id = paper["id"]
-    errors: list[str] = []
-    new_papers = 0
-
-    console.print(f"\n[bold]Processing:[/bold] {paper.get('title', 'N/A')}")
-
-    # ── 1. DISCOVER ────────────────────────────────────────────────────────
-    citations: list[dict[str, Any]] = []
-    from citation_tracker.sources import adsapi as ads
-    
-    if paper.get("ss_id"):
-        try:
-            citations.extend(ss.get_citations(paper["ss_id"]))
-        except Exception as exc:
-            errors.append(f"SS citations failed: {exc}")
-
-    if paper.get("oa_id"):
-        try:
-            citations.extend(oa.get_citations(paper["oa_id"]))
-        except Exception as exc:
-            errors.append(f"OA citations failed: {exc}")
-
-    if paper.get("ads_bibcode") and cfg.ads.api_key:
-        try:
-            citations.extend(ads.get_citations(paper["ads_bibcode"], cfg.ads.api_key))
-        except Exception as exc:
-            errors.append(f"ADS citations failed: {exc}")
-
-    citations = deduplicate(citations)
-
-    with get_conn(db_path) as conn:
-        for c in citations:
-            _cid, is_new = upsert_citing_paper(conn, tracked_id, c)
-            if is_new:
-                new_papers += 1
-
-    console.print(f"  Discovered {len(citations)} citing papers")
-
-    # ── 2. FETCH ───────────────────────────────────────────────────────────
-    with get_conn(db_path) as conn:
-        pending = get_citing_papers_pending_pdf(conn, tracked_id)
-
-    def _fetch_one(cp_row: Any) -> tuple[str, bool]:
-        cp_dict = dict(cp_row)
-        path = try_download_citing_paper(
-            cp_dict, cfg.pdfs_dir, email=cfg.unpaywall_email or "citation-tracker@example.com"
-        )
-        return cp_dict["id"], bool(path)
-
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(_fetch_one, cp) for cp in pending]
-        for future in as_completed(futures):
-            cp_id, ok = future.result()
-            with get_conn(db_path) as conn:
-                update_citing_paper_pdf(conn, cp_id, "downloaded" if ok else "failed")
-
-    # Check manual dir
-    for manual_pdf in scan_manual_dir(cfg.manual_dir):
-        # Manual PDFs handled via `ingest` command; just log
-        logger.debug("Manual PDF found: %s", manual_pdf)
-
-    # ── 3. PARSE ───────────────────────────────────────────────────────────
-    with get_conn(db_path) as conn:
-        downloaded = conn.execute(
-            """SELECT * FROM citing_papers
-               WHERE tracked_paper_id=? AND pdf_status IN ('downloaded','manual')
-               AND text_extracted=0""",
-            (tracked_id,),
-        ).fetchall()
-
-    def _parse_one(cp_row: Any) -> tuple[str, str | None]:
-        from citation_tracker.fetcher import _doi_to_path
-
-        cp_dict = dict(cp_row)
-        doi_safe = _doi_to_path(cp_dict["doi"]) if cp_dict["doi"] else "unknown"
-        pdf_path = cfg.pdfs_dir / doi_safe / "paper.pdf"
-        if not pdf_path.exists():
-            return cp_dict["id"], None
-        return cp_dict["id"], extract_text(pdf_path)
-
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(_parse_one, cp) for cp in downloaded]
-        for future in as_completed(futures):
-            cp_id, text = future.result()
-            if text:
-                with get_conn(db_path) as conn:
-                    update_citing_paper_text(conn, cp_id, text)
-
-    # ── 4. ANALYSE ─────────────────────────────────────────────────────────
-    with get_conn(db_path) as conn:
-        to_analyse = get_citing_papers_for_analysis(conn, tracked_id)
-
-    papers_analysed = 0
-    def _analyse_one(cp_row: Any) -> tuple[str, dict[str, Any]]:
-        cp_dict = dict(cp_row)
-        result = analyse_citing_paper(
-            tracked_paper=paper,
-            citing_paper=cp_dict,
-            extracted_text=cp_dict.get("extracted_text") or "",
-            config=cfg,
-        )
-        return cp_dict["id"], result
-
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(_analyse_one, cp) for cp in to_analyse]
-        for future in as_completed(futures):
-            try:
-                cp_id, result = future.result()
-                import json
-
-                with get_conn(db_path) as conn:
-                    insert_analysis(
-                        conn,
-                        {
-                            "citing_paper_id": cp_id,
-                            "tracked_paper_id": tracked_id,
-                            "backend_used": cfg.backend,
-                            "summary": result.get("summary"),
-                            "relationship_type": result.get("relationship_type"),
-                            "new_evidence": result.get("new_evidence"),
-                            "flaws_identified": result.get("flaws_identified"),
-                            "assumptions_questioned": result.get("assumptions_questioned"),
-                            "other_notes": result.get("other_notes"),
-                            "raw_response": json.dumps(result),
-                        },
-                    )
-                papers_analysed += 1
-            except Exception as exc:
-                errors.append(f"Analysis failed: {exc}")
-                logger.warning("Analysis failed: %s", exc)
-
-    # ── 5. REPORT ──────────────────────────────────────────────────────────
-    from citation_tracker.db import list_analyses
-    from citation_tracker.analyser import generate_executive_synthesis
-
-    with get_conn(db_path) as conn:
-        analyses_rows = list_analyses(conn, tracked_id)
-        failed_pdfs = conn.execute(
-            "SELECT * FROM citing_papers WHERE tracked_paper_id=? AND pdf_status='failed'",
-            (tracked_id,),
-        ).fetchall()
-
-    analyses_dicts = [dict(a) for a in analyses_rows]
-    executive_synthesis = None
-    if analyses_dicts:
-        try:
-            console.print("  Generating executive synthesis...")
-            executive_synthesis = generate_executive_synthesis(paper, analyses_dicts, cfg)
-        except Exception as exc:
-            errors.append(f"Synthesis failed: {exc}")
-            logger.warning("Synthesis failed: %s", exc)
-
-    section = (paper, analyses_rows, failed_pdfs, executive_synthesis)
-    return new_papers, papers_analysed, errors, section
 
 
 # ── ingest ─────────────────────────────────────────────────────────────────
@@ -655,18 +328,20 @@ def _process_paper(
 
 @main.command("ingest")
 @click.argument("pdf_path", type=click.Path(exists=True))
-@click.option("--id", "paper_id", required=True, help="ID of the tracked paper being cited")
-@click.option("--doi", help="DOI of the citing paper (optional, will try to extract if not provided)")
+@click.option(
+    "--id", "paper_id", required=True, help="ID of the tracked paper being cited"
+)
+@click.option(
+    "--doi",
+    help="DOI of the citing paper (optional, will try to extract if not provided)",
+)
 @click.pass_context
 def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) -> None:
     """Ingest a manually downloaded PDF as a citation for a tracked paper."""
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
-    from citation_tracker.db import get_conn, get_tracked_paper_by_id, upsert_citing_paper
-    from citation_tracker.fetcher import _doi_to_path
     from citation_tracker.parser import extract_text
-    import shutil
 
     with get_conn(db_path) as conn:
         tracked = get_tracked_paper_by_id(conn, paper_id)
@@ -674,10 +349,8 @@ def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) ->
             console.print(f"[red]Tracked paper with ID {paper_id} not found.[/red]")
             sys.exit(1)
 
-    # Resolve citing paper metadata
-    citing_paper = _resolve_paper(url=None, doi=doi, ss_id=None, cfg=cfg)
+    citing_paper = resolve_paper(url=None, doi=doi, ss_id=None, cfg=cfg)
     if citing_paper is None:
-        # If we can't resolve metadata, create a stub from filename
         title_guess = Path(pdf_path).stem.replace("_", " ").replace("-", " ")
         citing_paper = {
             "doi": doi,
@@ -691,9 +364,8 @@ def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) ->
         }
 
     with get_conn(db_path) as conn:
-        cid, is_new = upsert_citing_paper(conn, paper_id, citing_paper)
-        
-        # Copy PDF to pdfs dir
+        cid, _is_new = upsert_citing_paper(conn, paper_id, citing_paper)
+
         safe_doi = _doi_to_path(citing_paper.get("doi") or f"manual-{cid}")
         dest_dir = cfg.pdfs_dir / safe_doi
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -701,13 +373,14 @@ def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) ->
         shutil.copy2(pdf_path, dest)
 
         text = extract_text(dest)
-        from citation_tracker.db import update_citing_paper_pdf, update_citing_paper_text
-
         update_citing_paper_pdf(conn, cid, "manual")
         if text:
             update_citing_paper_text(conn, cid, text)
 
-    console.print(f"[green]Ingested citation for paper ID {paper_id}: {citing_paper['title']}[/green]")
+    console.print(
+        f"[green]Ingested citation for paper ID {paper_id}: "
+        f"{citing_paper['title']}[/green]"
+    )
     if not text:
         console.print("[yellow]Warning: could not extract text from PDF.[/yellow]")
 
@@ -722,8 +395,6 @@ def list_citations(ctx: click.Context, paper_id: str) -> None:
     """List all citing papers for a given tracked paper."""
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
-
-    from citation_tracker.db import get_conn, get_tracked_paper_by_id, list_citing_papers
 
     with get_conn(db_path) as conn:
         tracked = get_tracked_paper_by_id(conn, paper_id)
@@ -764,8 +435,6 @@ def status(ctx: click.Context) -> None:
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
-    from citation_tracker.db import db_summary, get_conn
-
     with get_conn(db_path) as conn:
         summary = db_summary(conn)
 
@@ -791,40 +460,33 @@ def show(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
-    from citation_tracker.db import (
-        get_conn,
-        get_tracked_paper_by_doi,
-        get_tracked_paper_by_id,
-        list_analyses,
-    )
-    from citation_tracker.report import build_report
-
     with get_conn(db_path) as conn:
         paper = None
         if paper_id:
             paper = get_tracked_paper_by_id(conn, paper_id)
         elif doi:
             paper = get_tracked_paper_by_doi(conn, doi)
-            
+
         if paper is None:
-            console.print(f"[red]Tracked paper not found.[/red]")
+            console.print("[red]Tracked paper not found.[/red]")
             sys.exit(1)
-            
+
         analyses = list_analyses(conn, paper["id"])
         failed_pdfs = conn.execute(
-            "SELECT * FROM citing_papers WHERE tracked_paper_id=? AND pdf_status='failed'",
+            "SELECT * FROM citing_papers"
+            " WHERE tracked_paper_id=? AND pdf_status='failed'",
             (paper["id"],),
         ).fetchall()
 
-    from citation_tracker.analyser import generate_executive_synthesis
-    executive_synthesis = None
+    scholarly_synthesis = None
     if analyses:
         try:
-            console.print("  Generating executive synthesis...")
-            analyses_dicts = [dict(a) for a in analyses]
-            executive_synthesis = generate_executive_synthesis(dict(paper), analyses_dicts, cfg)
+            console.print("  Generating scholarly synthesis...")
+            scholarly_synthesis = generate_scholarly_synthesis(
+                dict(paper), [dict(a) for a in analyses], cfg
+            )
         except Exception as exc:
             console.print(f"[yellow]Warning: synthesis failed: {exc}[/yellow]")
 
-    report = build_report(paper, analyses, failed_pdfs, executive_synthesis)
+    report = build_report(paper, analyses, failed_pdfs, scholarly_synthesis)
     _print_markdown(report)

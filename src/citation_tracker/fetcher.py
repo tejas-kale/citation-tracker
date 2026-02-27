@@ -42,7 +42,9 @@ def download_pdf(
         return dest
 
     try:
-        with httpx.Client(timeout=60, follow_redirects=True, headers=_HEADERS) as client:
+        with httpx.Client(
+            timeout=60, follow_redirects=True, headers=_HEADERS
+        ) as client:
             resp = client.get(pdf_url)
             resp.raise_for_status()
             content_type = resp.headers.get("content-type", "")
@@ -95,7 +97,9 @@ def try_download_citing_paper(
     return None
 
 
-def _try_unpaywall(doi: str, pdfs_dir: Path, email: str = "citation-tracker@example.com") -> Path | None:
+def _try_unpaywall(
+    doi: str, pdfs_dir: Path, email: str = "citation-tracker@example.com"
+) -> Path | None:
     """Try to get a PDF via the Unpaywall API."""
     try:
         url = f"https://api.unpaywall.org/v2/{doi}?email={email}"
@@ -147,7 +151,9 @@ def _try_arxiv(doi: str | None, paper: dict[str, Any], pdfs_dir: Path) -> Path |
     arxiv_id = _extract_arxiv_id(doi, paper)
     if not arxiv_id:
         return None
-    return download_pdf(f"https://arxiv.org/pdf/{arxiv_id}.pdf", pdfs_dir, doi=doi or arxiv_id)
+    return download_pdf(
+        f"https://arxiv.org/pdf/{arxiv_id}.pdf", pdfs_dir, doi=doi or arxiv_id
+    )
 
 
 def _try_ads(bibcode: str, pdfs_dir: Path, doi: str | None = None) -> Path | None:

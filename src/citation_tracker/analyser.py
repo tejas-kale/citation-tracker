@@ -5,6 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from openai import OpenAI
+
+from citation_tracker.backends.openrouter import OPENROUTER_BASE_URL
 from citation_tracker.config import Config
 
 logger = logging.getLogger(__name__)
@@ -63,20 +66,16 @@ Return only the synthesis text, no preamble.\
 
 
 def _get_backend(config: Config) -> Any:
-    if config.backend == "openrouter":
-        from citation_tracker.backends import openrouter
+    from citation_tracker.backends import openrouter
 
+    if config.backend == "openrouter":
         return lambda prompt: openrouter.analyse(prompt, config.openrouter)
-    else:
-        raise ValueError(f"Unknown backend: {config.backend!r}")
+    raise ValueError(f"Unknown backend: {config.backend!r}")
 
 
 def _call_llm_text(prompt: str, config: Config) -> str:
     """Call the LLM and return raw text (not JSON-parsed)."""
     if config.backend == "openrouter":
-        from openai import OpenAI
-        from citation_tracker.backends.openrouter import OPENROUTER_BASE_URL
-
         client = OpenAI(api_key=config.openrouter.api_key, base_url=OPENROUTER_BASE_URL)
         resp = client.chat.completions.create(
             model=config.openrouter.model,
@@ -98,10 +97,11 @@ def _map_reduce(text: str, config: Config) -> str:
         summaries.append(_call_llm_text(prompt, config))
     if len(summaries) == 1:
         return summaries[0]
+    combined = "\n\n".join(
+        f"Section {i + 1}: {s}" for i, s in enumerate(summaries)
+    )
     return _call_llm_text(
-        _REDUCE_SUMMARY_PROMPT.format(
-            summaries="\n\n".join(f"Section {i + 1}: {s}" for i, s in enumerate(summaries))
-        ),
+        _REDUCE_SUMMARY_PROMPT.format(summaries=combined),
         config,
     )
 
@@ -140,7 +140,7 @@ def analyse_citing_paper(
     return backend_fn(prompt)
 
 
-def generate_executive_synthesis(
+def generate_scholarly_synthesis(
     tracked_paper: dict[str, Any],
     analyses: list[dict[str, Any]],
     config: Config
@@ -159,7 +159,8 @@ def generate_executive_synthesis(
             f"Relationship: {a.get('relationship_type')}\n"
             f"Summary: {a.get('summary')}\n"
             f"New Evidence: {a.get('new_evidence')}\n"
-            f"Challenges/Flaws: {a.get('flaws_identified') or a.get('assumptions_questioned')}\n"
+            "Challenges/Flaws: "
+            f"{a.get('flaws_identified') or a.get('assumptions_questioned')}\n"
         )
     
     all_summaries = "\n---\n".join(summaries)
@@ -195,7 +196,7 @@ Return raw Markdown.
 
 
 def parse_paper_metadata(text: str, config: Config) -> dict[str, Any]:
-    """Extract paper metadata (title, authors, year, abstract, DOI) from PDF text using LLM."""
+    """Extract paper metadata (title, authors, year, abstract, DOI) from PDF text."""
     backend_fn = _get_backend(config)
 
     prompt = f"""\

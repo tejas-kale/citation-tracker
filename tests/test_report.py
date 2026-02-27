@@ -32,7 +32,7 @@ def mock_analyses():
 
 def test_build_report(mock_tracked_paper, mock_analyses):
     synthesis = "This is a high-level synthesis."
-    report = build_report(mock_tracked_paper, mock_analyses, [], executive_synthesis=synthesis)
+    report = build_report(mock_tracked_paper, mock_analyses, [], scholarly_synthesis=synthesis)
     assert "# Citation Report: Main Paper" in report
     assert "*Author 1*" in report
     assert "Source URL: https://example.com/main.pdf" in report

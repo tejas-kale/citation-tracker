@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +22,12 @@ def _doc_to_dict(doc: dict[str, Any]) -> dict[str, Any]:
     authors = ", ".join(doc.get("author") or [])
     
     # Try to find a PDF link in the 'property' or 'esource'
-    # ADS Link Gateway is usually better: https://ui.adsabs.harvard.edu/link_gateway/{bibcode}/PUB_PDF
     bibcode = doc.get("bibcode")
-    pdf_url = f"https://ui.adsabs.harvard.edu/link_gateway/{bibcode}/EPRINT_PDF" if bibcode else None
+    pdf_url = (
+        f"https://ui.adsabs.harvard.edu/link_gateway/{bibcode}/EPRINT_PDF"
+        if bibcode
+        else None
+    )
 
     return {
         "title": (doc.get("title") or ["Untitled"])[0],
@@ -63,7 +66,6 @@ def _get(url: str, params: dict[str, Any], token: str) -> Any:
 
 def get_paper_by_doi(doi: str, token: str) -> dict[str, Any] | None:
     """Fetch paper metadata from ADS by DOI."""
-    from tenacity import RetryError
     try:
         query = f'doi:"{doi}"'
         data = _get(
@@ -82,7 +84,9 @@ def get_paper_by_doi(doi: str, token: str) -> dict[str, Any] | None:
         return None
 
 
-def get_citations(bibcode: str, token: str, max_results: int = 500) -> list[dict[str, Any]]:
+def get_citations(
+    bibcode: str, token: str, max_results: int = 500
+) -> list[dict[str, Any]]:
     """Fetch papers citing the given ADS bibcode."""
     from tenacity import RetryError
     results: list[dict[str, Any]] = []
@@ -110,7 +114,6 @@ def get_citations(bibcode: str, token: str, max_results: int = 500) -> list[dict
 
 def search_paper_by_query(query: str, token: str) -> dict[str, Any] | None:
     """Search ADS with a general query string."""
-    from tenacity import RetryError
     try:
         data = _get(
             f"{ADS_BASE}/search/query",

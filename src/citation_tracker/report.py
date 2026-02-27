@@ -15,7 +15,7 @@ def build_report(
     tracked_paper: sqlite3.Row,
     analyses: list[sqlite3.Row],
     failed_pdfs: list[sqlite3.Row],
-    executive_synthesis: str | None = None,
+    scholarly_synthesis: str | None = None,
 ) -> str:
     """
     Build a Markdown report for a single tracked paper.
@@ -39,16 +39,20 @@ def build_report(
         lines.append(f"*Source URL: {tracked_paper['source_url']}*  ")
     lines.append(f"\n*Generated: {now}*\n")
 
-    if executive_synthesis:
+    if scholarly_synthesis:
         lines.append("## Scholarly Synthesis & Impact Assessment\n")
-        lines.append(f"{executive_synthesis}\n")
+        lines.append(f"{scholarly_synthesis}\n")
         lines.append("---\n")
 
     if analyses:
         lines.append(f"## Individual Citing Papers ({len(analyses)} analysed)\n")
         for a in analyses:
             lines.append("<details markdown=\"1\">")
-            lines.append(f"<summary><b>{a['citing_title'] or 'Untitled'}</b> ({a['citing_year'] or 'N/A'})</summary>\n")
+            title_str = a["citing_title"] or "Untitled"
+            year_str = a["citing_year"] or "N/A"
+            lines.append(
+                f"<summary><b>{title_str}</b> ({year_str})</summary>\n"
+            )
             lines.append(
                 f"**Authors:** {_format_authors(a['citing_authors'])}  \n"
                 f"**Year:** {a['citing_year'] or 'N/A'}  \n"
@@ -62,7 +66,9 @@ def build_report(
             if a["flaws_identified"]:
                 lines.append(f"**Flaws Identified:** {a['flaws_identified']}\n")
             if a["assumptions_questioned"]:
-                lines.append(f"**Assumptions Questioned:** {a['assumptions_questioned']}\n")
+                lines.append(
+                    f"**Assumptions Questioned:** {a['assumptions_questioned']}\n"
+                )
             if a["other_notes"]:
                 lines.append(f"**Other Notes:** {a['other_notes']}\n")
             lines.append("\n</details>")
@@ -80,15 +86,6 @@ def build_report(
 
     return "\n".join(lines)
 
-
-def build_full_report(
-    sections: list[tuple[sqlite3.Row, list[sqlite3.Row], list[sqlite3.Row], str | None]],
-) -> str:
-    """Build a combined report for multiple tracked papers."""
-    if not sections:
-        return "# Citation Tracker Report\n\nNo data to report.\n"
-    parts = [build_report(tp, analyses, failed, synth) for tp, analyses, failed, synth in sections]
-    return "\n\n---\n\n".join(parts)
 
 
 def render_full_report_html(markdown_content: str) -> str:

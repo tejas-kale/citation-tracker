@@ -55,7 +55,9 @@ class Config:
         return self.data_dir / "reports"
 
 
-def load_config(config_path: Path | None = None, env_path: Path | None = None) -> Config:
+def load_config(
+    config_path: Path | None = None, env_path: Path | None = None
+) -> Config:
     """Load configuration from .env and optional YAML config file."""
     # Load .env file
     env_file = env_path or Path(".env")

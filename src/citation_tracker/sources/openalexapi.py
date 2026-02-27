@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +52,8 @@ def _get(url: str, params: dict[str, Any]) -> Any:
         raise
 
 
-def search_paper_by_title(title: str) -> dict[str, Any] | None:
-    """Search OpenAlex for a paper by title, return best match."""
-    return search_paper_by_query(title)
-
-
 def search_paper_by_query(query: str) -> dict[str, Any] | None:
     """Search OpenAlex with a general query string."""
-    from tenacity import RetryError
     try:
         data = _get(
             f"{OA_BASE}/works",
@@ -76,7 +70,6 @@ def search_paper_by_query(query: str) -> dict[str, Any] | None:
 
 def get_paper_by_doi(doi: str) -> dict[str, Any] | None:
     """Fetch paper metadata from OpenAlex by DOI."""
-    from tenacity import RetryError
     try:
         data = _get(f"{OA_BASE}/works/doi:{quote(doi, safe='')}", {})
         return _work_to_dict(data)
@@ -87,7 +80,6 @@ def get_paper_by_doi(doi: str) -> dict[str, Any] | None:
 
 def get_paper_by_arxiv(arxiv_id: str) -> dict[str, Any] | None:
     """Fetch paper metadata from OpenAlex by arXiv ID."""
-    from tenacity import RetryError
     try:
         data = _get(f"{OA_BASE}/works", {"filter": f"ids.arxiv:{arxiv_id}"})
         results = data.get("results") or []

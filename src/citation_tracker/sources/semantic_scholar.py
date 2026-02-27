@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,8 @@ def _get(url: str, params: dict[str, Any]) -> Any:
         raise
 
 
-def search_paper_by_title(title: str) -> dict[str, Any] | None:
-    """Search Semantic Scholar for a paper by title, return best match."""
-    return search_paper_by_query(title)
-
-
 def search_paper_by_query(query: str) -> dict[str, Any] | None:
     """Search Semantic Scholar with a general query string."""
-    from tenacity import RetryError
     try:
         data = _get(
             f"{SS_BASE}/paper/search",
@@ -69,7 +63,6 @@ def search_paper_by_query(query: str) -> dict[str, Any] | None:
 
 def get_paper_by_id(ss_id: str) -> dict[str, Any] | None:
     """Fetch paper metadata from Semantic Scholar by SS paper ID."""
-    from tenacity import RetryError
     try:
         data = _get(f"{SS_BASE}/paper/{ss_id}", {"fields": FIELDS})
         return _paper_to_dict(data)
@@ -80,7 +73,6 @@ def get_paper_by_id(ss_id: str) -> dict[str, Any] | None:
 
 def get_paper_by_doi(doi: str) -> dict[str, Any] | None:
     """Fetch paper metadata from Semantic Scholar by DOI."""
-    from tenacity import RetryError
     try:
         data = _get(f"{SS_BASE}/paper/DOI:{doi}", {"fields": FIELDS})
         return _paper_to_dict(data)
@@ -91,7 +83,6 @@ def get_paper_by_doi(doi: str) -> dict[str, Any] | None:
 
 def get_paper_by_arxiv(arxiv_id: str) -> dict[str, Any] | None:
     """Fetch paper metadata from Semantic Scholar by arXiv ID."""
-    from tenacity import RetryError
     try:
         data = _get(f"{SS_BASE}/paper/ARXIV:{arxiv_id}", {"fields": FIELDS})
         return _paper_to_dict(data)
@@ -102,7 +93,6 @@ def get_paper_by_arxiv(arxiv_id: str) -> dict[str, Any] | None:
 
 def get_citations(ss_id: str, limit: int = 500) -> list[dict[str, Any]]:
     """Fetch all papers citing the given Semantic Scholar paper ID."""
-    from tenacity import RetryError
     results: list[dict[str, Any]] = []
     offset = 0
     while True:
