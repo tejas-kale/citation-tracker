@@ -66,9 +66,9 @@ def _print_markdown(content: str) -> None:
 
 
 @click.group()
-@click.option("--config", "config_path", default=None, help="Path to config.yaml")
-@click.option("--env", "env_path", default=None, help="Path to .env file")
-@click.option("--verbose", is_flag=True, default=False)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml (default: ./config.yaml or ~/.citation-tracker/config.yaml)")
+@click.option("--env", "env_path", default=None, help="Path to .env file (default: ./.env or ~/.citation-tracker/.env)")
+@click.option("--verbose", is_flag=True, default=False, help="Enable DEBUG-level logging")
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -76,7 +76,20 @@ def main(
     env_path: str | None,
     verbose: bool,
 ) -> None:
-    """Citation Tracker — track and analyse citations of academic papers."""
+    """Citation Tracker — discover, fetch, parse, and analyse papers that cite your work.
+
+    Runs a 5-stage pipeline (discover → fetch → parse → analyse → report) for each
+    tracked paper. Results are stored in a local SQLite database and saved as Markdown
+    reports in ~/.citation-tracker/reports/.
+
+    Configuration is loaded from config.yaml (searched in ./ then ~/.citation-tracker/).
+    API keys are loaded from .env (same search order). Use --config and --env to override.
+
+    \b
+    Required API keys (in .env):
+      OPENROUTER_API_KEY   LLM analysis via OpenRouter (required)
+      ADS_DEV_KEY          NASA ADS discovery for astronomy/physics papers (optional)
+    """
     _setup_logging(verbose)
     ctx.ensure_object(dict)
     cfg = load_config(
@@ -91,13 +104,27 @@ def main(
 
 @main.command("add")
 @click.argument("url", required=False)
-@click.option("--doi", default=None, help="DOI of the paper to track")
-@click.option("--ss-id", default=None, help="Semantic Scholar paper ID")
+@click.option("--doi", default=None, help="DOI of the paper (e.g. 10.1145/1234567.1234568)")
+@click.option("--ss-id", default=None, help="Semantic Scholar paper ID (40-char hex or numeric)")
 @click.pass_context
 def add_paper(
     ctx: click.Context, url: str | None, doi: str | None, ss_id: str | None
 ) -> None:
-    """Add a paper to track by URL, DOI, or Semantic Scholar ID."""
+    """Add a paper to track by URL, DOI, or Semantic Scholar ID.
+
+    Resolves full metadata (title, authors, year, abstract, DOI) via Semantic Scholar
+    and stores the paper in the database. Papers with a duplicate DOI are rejected with
+    a message showing the existing record's ID.
+
+    Provide exactly one of: URL argument, --doi, or --ss-id.
+
+    \b
+    Examples:
+      citation-tracker add "https://arxiv.org/abs/2401.00001"
+      citation-tracker add "https://example.com/paper.pdf"
+      citation-tracker add --doi 10.1145/1234567.1234568
+      citation-tracker add --ss-id 204e3073870fae3d05bcbc2f6a8e263d21195671
+    """
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
@@ -127,7 +154,11 @@ def add_paper(
 @main.command("list")
 @click.pass_context
 def list_papers(ctx: click.Context) -> None:
-    """List all tracked papers."""
+    """List all tracked papers (ID, title, DOI/URL, year, active status, date added).
+
+    Use the ID shown here with --id in other commands (run, show, citations, pause, etc.).
+    Active=✓ means the paper is included in `run`; Active=✗ means it is paused.
+    """
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
@@ -163,20 +194,27 @@ def list_papers(ctx: click.Context) -> None:
 
 
 @main.command("pause")
-@click.option("--id", "paper_id", help="ID of the paper to pause")
-@click.option("--doi", help="DOI of the paper to pause")
+@click.option("--id", "paper_id", help="8-char hex ID of the paper (from `list`)")
+@click.option("--doi", help="DOI of the paper")
 @click.pass_context
 def pause_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
-    """Pause tracking a paper (keeps all history)."""
+    """Pause tracking a paper (keeps all history and citations).
+
+    Paused papers are skipped by `run` until resumed. All existing citations,
+    analyses, and reports are preserved.
+    """
     _set_active(ctx, paper_id, doi, active=False)
 
 
 @main.command("resume")
-@click.option("--id", "paper_id", help="ID of the paper to resume")
-@click.option("--doi", help="DOI of the paper to resume")
+@click.option("--id", "paper_id", help="8-char hex ID of the paper (from `list`)")
+@click.option("--doi", help="DOI of the paper")
 @click.pass_context
 def resume_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
-    """Resume tracking a paper."""
+    """Resume tracking a paused paper.
+
+    The paper will be included in the next `run` after being resumed.
+    """
     _set_active(ctx, paper_id, doi, active=True)
 
 
@@ -206,12 +244,16 @@ def _set_active(
 
 
 @main.command("remove")
-@click.option("--id", "paper_id", help="ID of the paper to remove")
-@click.option("--doi", help="DOI of the paper to remove")
+@click.option("--id", "paper_id", help="8-char hex ID of the paper (from `list`)")
+@click.option("--doi", help="DOI of the paper")
 @click.confirmation_option(prompt="This will delete all data for this paper. Continue?")
 @click.pass_context
 def remove_paper(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
-    """Remove a paper and all its data."""
+    """Remove a tracked paper and ALL its data (citations, analyses, PDFs).
+
+    This is irreversible. A confirmation prompt is shown before proceeding.
+    Use `pause` instead if you want to stop processing a paper without losing data.
+    """
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
@@ -266,11 +308,11 @@ def _save_reports(report_sections: list[Any], cfg: Any) -> None:
 @main.command("run")
 @click.option(
     "--id", "paper_id", default=None,
-    help="Process a single tracked paper by numeric ID or DOI",
+    help="Process a single paper by 8-char hex ID or DOI (default: all active papers)",
 )
 @click.option(
     "--workers", default=8, show_default=True, type=int,
-    help="Worker threads for fetch/parse/analyse",
+    help="Concurrent threads for the fetch/parse/analyse stages",
 )
 @click.option("--triggered-by", default="manual", hidden=True)
 @click.pass_context
@@ -280,7 +322,33 @@ def run_pipeline(
     workers: int,
     triggered_by: str,
 ) -> None:
-    """Run the full discovery → fetch → parse → analyse → report pipeline."""
+    """Run the full discovery → fetch → parse → analyse → report pipeline.
+
+    Processes all active tracked papers (or a single paper with --id). For each paper:
+
+    \b
+    1. DISCOVER  Query Semantic Scholar, OpenAlex, and NASA ADS in parallel;
+                 deduplicate citing papers across sources.
+    2. FETCH     Download PDFs via: direct URL → ADS Link Gateway → Unpaywall
+                 → CrossRef → arXiv. Status tracked as pending/downloaded/failed.
+    3. PARSE     Extract Markdown-formatted text from PDFs using pymupdf4llm.
+    4. ANALYSE   Send paper text + tracked paper metadata to the configured LLM.
+                 Papers over 80 KB use map-reduce: chunk → summarise → reduce.
+                 Produces: summary, relationship_type, new_evidence, flaws_identified,
+                 assumptions_questioned, other_notes.
+    5. REPORT    Assemble Markdown with a scholarly synthesis; save to
+                 ~/.citation-tracker/reports/<id>.md.
+
+    Fetch, parse, and analyse run concurrently across --workers threads.
+    Previously analysed papers are not re-analysed unless the DB record is cleared.
+
+    \b
+    Examples:
+      citation-tracker run
+      citation-tracker run --id a1b2c3d4
+      citation-tracker run --id 10.1145/1234567.1234568
+      citation-tracker run --workers 16
+    """
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
@@ -329,15 +397,32 @@ def run_pipeline(
 @main.command("ingest")
 @click.argument("pdf_path", type=click.Path(exists=True))
 @click.option(
-    "--id", "paper_id", required=True, help="ID of the tracked paper being cited"
+    "--id", "paper_id", required=True,
+    help="8-char hex ID of the tracked paper being cited (from `list`)",
 )
 @click.option(
     "--doi",
-    help="DOI of the citing paper (optional, will try to extract if not provided)",
+    help="DOI of the citing paper (optional; title is inferred from filename if omitted)",
 )
 @click.pass_context
 def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) -> None:
-    """Ingest a manually downloaded PDF as a citation for a tracked paper."""
+    """Ingest a manually downloaded PDF as a citation for a tracked paper.
+
+    Use this when automatic PDF fetching fails or for papers not in public databases.
+    The PDF is copied to ~/.citation-tracker/pdfs/, text is extracted immediately,
+    and the citing paper is registered in the database. It will be analysed on the
+    next `run` call.
+
+    PDF_PATH is the local path to the PDF file to ingest.
+
+    If --doi is provided, metadata is resolved via Semantic Scholar. Otherwise,
+    the title is guessed from the filename.
+
+    \b
+    Example:
+      citation-tracker ingest ~/Downloads/smith2024.pdf --id a1b2c3d4
+      citation-tracker ingest paper.pdf --id a1b2c3d4 --doi 10.1145/1234567.1234568
+    """
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
@@ -389,10 +474,21 @@ def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) ->
 
 
 @main.command("citations")
-@click.option("--id", "paper_id", required=True, help="ID of the tracked paper")
+@click.option("--id", "paper_id", required=True, help="8-char hex ID of the tracked paper (from `list`)")
 @click.pass_context
 def list_citations(ctx: click.Context, paper_id: str) -> None:
-    """List all citing papers for a given tracked paper."""
+    """List all papers that cite a given tracked paper.
+
+    Shows each citing paper's ID, title, DOI, PDF status, and whether an LLM
+    analysis has been completed.
+
+    \b
+    PDF status values:
+      pending     Not yet attempted
+      downloaded  PDF successfully fetched
+      failed      All fetch strategies exhausted
+      manual      Ingested via `ingest` command
+    """
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
@@ -431,7 +527,11 @@ def list_citations(ctx: click.Context, paper_id: str) -> None:
 @main.command("status")
 @click.pass_context
 def status(ctx: click.Context) -> None:
-    """Show DB summary: tracked papers, citation counts, pending items."""
+    """Show a database summary: tracked papers, citation counts, and pending work.
+
+    Reports counts for: active tracked papers, total citing papers discovered,
+    PDFs still pending download, and total LLM analyses completed.
+    """
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 
@@ -452,11 +552,19 @@ def status(ctx: click.Context) -> None:
 
 
 @main.command("show")
-@click.option("--id", "paper_id", help="ID of the tracked paper")
-@click.option("--doi", help="DOI of the tracked paper to show")
+@click.option("--id", "paper_id", help="8-char hex ID of the tracked paper (from `list`)")
+@click.option("--doi", help="DOI of the tracked paper")
 @click.pass_context
 def show(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
-    """Show all analyses for a given tracked paper."""
+    """Render the full analysis report for a tracked paper in the terminal.
+
+    Generates a scholarly synthesis on the fly using the configured LLM, then
+    prints the full Markdown report. Uses `glow` for rendering if it is installed,
+    otherwise falls back to `rich`.
+
+    This does not save a file — use `run` to generate saved reports in
+    ~/.citation-tracker/reports/.
+    """
     cfg = ctx.obj["cfg"]
     db_path = _get_db(cfg)
 

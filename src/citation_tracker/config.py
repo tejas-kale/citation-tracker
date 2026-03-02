@@ -55,43 +55,50 @@ class Config:
         return self.data_dir / "reports"
 
 
+_DATA_DIR = Path.home() / ".citation-tracker"
+
+
 def load_config(
     config_path: Path | None = None, env_path: Path | None = None
 ) -> Config:
     """Load configuration from .env and optional YAML config file."""
-    # Load .env file
-    env_file = env_path or Path(".env")
-    if env_file.exists():
-        load_dotenv(env_file)
+    # Load .env — check explicit path, CWD, then ~/.citation-tracker/
+    env_candidates = [env_path, Path(".env"), _DATA_DIR / ".env"]
+    for candidate in env_candidates:
+        if candidate and candidate.exists():
+            load_dotenv(candidate)
+            break
 
     config = Config()
 
-    # Load YAML config if provided or default config.yaml exists
-    yaml_file = config_path or Path("config.yaml")
-    if yaml_file.exists():
-        with yaml_file.open() as f:
-            raw = yaml.safe_load(f) or {}
+    # Load YAML config — check explicit path, CWD, then ~/.citation-tracker/
+    yaml_candidates = [config_path, Path("config.yaml"), _DATA_DIR / "config.yaml"]
+    yaml_file = next((p for p in yaml_candidates if p and p.exists()), None)
+    if yaml_file is None:
+        return config
+    with yaml_file.open() as f:
+        raw = yaml.safe_load(f) or {}
 
-        if "backend" in raw:
-            config.backend = raw["backend"]
+    if "backend" in raw:
+        config.backend = raw["backend"]
 
-        if "openrouter" in raw:
-            or_raw = raw["openrouter"]
-            config.openrouter = OpenRouterConfig(
-                model=or_raw.get("model", config.openrouter.model),
-                api_key_env=or_raw.get("api_key_env", config.openrouter.api_key_env),
-            )
+    if "openrouter" in raw:
+        or_raw = raw["openrouter"]
+        config.openrouter = OpenRouterConfig(
+            model=or_raw.get("model", config.openrouter.model),
+            api_key_env=or_raw.get("api_key_env", config.openrouter.api_key_env),
+        )
 
-        if "ads" in raw:
-            ads_raw = raw["ads"]
-            config.ads = ADSConfig(
-                api_key_env=ads_raw.get("api_key_env", config.ads.api_key_env),
-            )
+    if "ads" in raw:
+        ads_raw = raw["ads"]
+        config.ads = ADSConfig(
+            api_key_env=ads_raw.get("api_key_env", config.ads.api_key_env),
+        )
 
-        if "data_dir" in raw:
-            config.data_dir = Path(raw["data_dir"]).expanduser()
+    if "data_dir" in raw:
+        config.data_dir = Path(raw["data_dir"]).expanduser()
 
-        if "unpaywall_email" in raw:
-            config.unpaywall_email = raw["unpaywall_email"]
+    if "unpaywall_email" in raw:
+        config.unpaywall_email = raw["unpaywall_email"]
 
     return config
