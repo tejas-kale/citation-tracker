@@ -11,26 +11,68 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Type alias for a report section tuple
-ReportSection = tuple[dict[str, Any], list[Any], list[Any], str | None]
+ReportSection = tuple[dict[str, Any], list[Any], list[Any], str | None, dict[str, int]]
+
+
+def _try_resolve_paper_ids(
+    paper: dict[str, Any], cfg: Any, db_path: Path
+) -> dict[str, Any]:
+    """Try to find API identifiers for a tracked paper that lacks them.
+
+    Searches Semantic Scholar and OpenAlex by title. If a match is found,
+    updates the tracked_papers row in the DB and returns an updated paper dict.
+    """
+    from citation_tracker.db import get_conn
+    from citation_tracker.sources import semantic_scholar as ss
+    from citation_tracker.sources import openalexapi as oa
+
+    title = paper.get("title")
+    if not title:
+        return paper
+
+    found = ss.search_paper_by_query(title) or oa.search_paper_by_query(title)
+    if not found:
+        return paper
+
+    updates = {k: found[k] for k in ("doi", "ss_id", "oa_id") if found.get(k)}
+    if not updates:
+        return paper
+
+    logger.info("Resolved API identifiers for tracked paper via title search: %s", updates)
+    with get_conn(db_path) as conn:
+        placeholders = ", ".join(f"{k}=:{k}" for k in updates)
+        conn.execute(
+            f"UPDATE tracked_papers SET {placeholders} WHERE id=:id",
+            {**updates, "id": paper["id"]},
+        )
+    return {**paper, **updates}
 
 
 def _discover_citations(
-    paper: dict[str, Any], cfg: Any, errors: list[str]
-) -> list[dict[str, Any]]:
+    paper: dict[str, Any], cfg: Any, db_path: Path, errors: list[str]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Query all configured citation sources and deduplicate results.
 
+    When the paper has no API identifiers, attempts a title-based search to
+    find them. Returns updated paper dict alongside the citations list so callers
+    can persist any newly resolved identifiers.
+
     Args:
-        paper: Tracked paper dict (must include ss_id, oa_id, ads_bibcode).
+        paper: Tracked paper dict (ss_id, oa_id, ads_bibcode used if present).
         cfg: Application config.
+        db_path: Path to the SQLite database.
         errors: List to append error strings to.
 
     Returns:
-        Deduplicated list of citing paper dicts.
+        Tuple of (deduplicated citing papers, updated paper dict).
     """
     from citation_tracker.sources import semantic_scholar as ss
     from citation_tracker.sources import openalexapi as oa
     from citation_tracker.sources import adsapi as ads
     from citation_tracker.sources.deduplicator import deduplicate
+
+    if not paper.get("ss_id") and not paper.get("oa_id") and not paper.get("ads_bibcode"):
+        paper = _try_resolve_paper_ids(paper, cfg, db_path)
 
     citations: list[dict[str, Any]] = []
 
@@ -52,7 +94,7 @@ def _discover_citations(
         except Exception as exc:
             errors.append(f"ADS citations failed: {exc}")
 
-    return deduplicate(citations)
+    return deduplicate(citations), paper
 
 
 def _fetch_stage(
@@ -189,7 +231,7 @@ def _report_stage(
 ) -> ReportSection:
     """Collect analyses and generate a scholarly synthesis.
 
-    Returns a tuple of (paper, analyses_rows, failed_pdfs, scholarly_synthesis).
+    Returns a tuple of (paper, analyses_rows, failed_pdfs, scholarly_synthesis, citing_stats).
     """
     from citation_tracker.db import get_conn, list_analyses
     from citation_tracker.analyser import generate_scholarly_synthesis
@@ -201,6 +243,25 @@ def _report_stage(
             " WHERE tracked_paper_id=? AND pdf_status='failed'",
             (tracked_id,),
         ).fetchall()
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN pdf_status='pending'    THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN pdf_status='downloaded' THEN 1 ELSE 0 END) AS downloaded,
+                SUM(CASE WHEN pdf_status='failed'     THEN 1 ELSE 0 END) AS failed,
+                SUM(CASE WHEN pdf_status='manual'     THEN 1 ELSE 0 END) AS manual
+            FROM citing_papers WHERE tracked_paper_id=?
+            """,
+            (tracked_id,),
+        ).fetchone()
+        citing_stats: dict[str, int] = {
+            "total":      row["total"]      or 0,
+            "pending":    row["pending"]    or 0,
+            "downloaded": row["downloaded"] or 0,
+            "failed":     row["failed"]     or 0,
+            "manual":     row["manual"]     or 0,
+        }
 
     scholarly_synthesis = None
     if analyses_rows:
@@ -213,7 +274,7 @@ def _report_stage(
             errors.append(f"Synthesis failed: {exc}")
             logger.warning("Synthesis failed: %s", exc)
 
-    return paper, analyses_rows, failed_pdfs, scholarly_synthesis
+    return paper, analyses_rows, failed_pdfs, scholarly_synthesis, citing_stats
 
 
 def process_paper(
@@ -244,7 +305,7 @@ def process_paper(
     logger.info("Processing: %s", paper.get("title", "N/A"))
 
     # 1. DISCOVER
-    citations = _discover_citations(paper, cfg, errors)
+    citations, paper = _discover_citations(paper, cfg, db_path, errors)
     new_papers = 0
     with get_conn(db_path) as conn:
         for c in citations:

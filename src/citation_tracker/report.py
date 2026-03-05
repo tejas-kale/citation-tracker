@@ -16,6 +16,7 @@ def build_report(
     analyses: list[sqlite3.Row],
     failed_pdfs: list[sqlite3.Row],
     scholarly_synthesis: str | None = None,
+    citing_stats: dict[str, int] | None = None,
 ) -> str:
     """
     Build a Markdown report for a single tracked paper.
@@ -23,6 +24,7 @@ def build_report(
     *analyses* rows must include citing_title, citing_authors, citing_year,
     citing_doi plus the analysis fields.
     *failed_pdfs* are citing_papers rows with pdf_status='failed'.
+    *citing_stats* is a dict with keys total/pending/downloaded/failed/manual.
     """
     lines: list[str] = []
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -74,7 +76,34 @@ def build_report(
             lines.append("\n</details>")
             lines.append("")
     else:
-        lines.append("## No new analysed citations in this run.\n")
+        lines.append("## Citations\n")
+        if not citing_stats or citing_stats.get("total", 0) == 0:
+            tp = dict(tracked_paper)
+            has_api_ids = tp.get("ss_id") or tp.get("oa_id") or tp.get("doi") or tp.get("ads_bibcode")
+            if has_api_ids:
+                lines.append("No citing papers discovered yet.\n")
+            else:
+                lines.append(
+                    "This paper has no Semantic Scholar, OpenAlex, or DOI identifier — "
+                    "it may not be indexed in any citation database yet. "
+                    "Run again later; citation-tracker will pick up identifiers automatically "
+                    "once the paper is indexed.\n"
+                )
+        else:
+            total = citing_stats["total"]
+            parts = []
+            if citing_stats.get("pending"):
+                parts.append(f"{citing_stats['pending']} pending PDF download")
+            if citing_stats.get("downloaded"):
+                parts.append(
+                    f"{citing_stats['downloaded']} PDF(s) downloaded, awaiting analysis"
+                )
+            if citing_stats.get("manual"):
+                parts.append(f"{citing_stats['manual']} manually ingested, awaiting analysis")
+            if citing_stats.get("failed"):
+                parts.append(f"{citing_stats['failed']} PDF(s) failed (see below)")
+            status = ": " + ", ".join(parts) if parts else ""
+            lines.append(f"{total} citing paper(s) discovered — no analyses yet{status}.\n")
 
     if failed_pdfs:
         lines.append("## PDFs Requiring Manual Download\n")

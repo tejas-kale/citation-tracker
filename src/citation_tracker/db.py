@@ -304,6 +304,29 @@ def update_citing_paper_text(
     )
 
 
+def update_citing_paper_metadata(
+    conn: sqlite3.Connection,
+    citing_paper_id: str,
+    paper: dict[str, Any],
+) -> None:
+    """Overwrite resolvable metadata fields on a citing paper."""
+    conn.execute(
+        """UPDATE citing_papers
+           SET doi=?, title=?, authors=?, year=?, abstract=?, ss_id=?, oa_id=?
+           WHERE id=?""",
+        (
+            paper.get("doi"),
+            paper.get("title"),
+            _serialise_authors(paper.get("authors")),
+            paper.get("year"),
+            paper.get("abstract"),
+            paper.get("ss_id"),
+            paper.get("oa_id"),
+            citing_paper_id,
+        ),
+    )
+
+
 def list_citing_papers(
     conn: sqlite3.Connection, tracked_paper_id: str
 ) -> list[sqlite3.Row]:

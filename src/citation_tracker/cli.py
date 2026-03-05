@@ -30,6 +30,7 @@ from citation_tracker.db import (
     list_tracked_papers,
     set_tracked_paper_active,
     upsert_citing_paper,
+    update_citing_paper_metadata,
     update_citing_paper_pdf,
     update_citing_paper_text,
 )
@@ -293,9 +294,9 @@ def _save_reports(report_sections: list[Any], cfg: Any) -> None:
     reports_dir = cfg.reports_dir
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    for tracked_paper, analyses_rows, failed_pdfs, scholarly_synthesis in report_sections:
+    for tracked_paper, analyses_rows, failed_pdfs, scholarly_synthesis, citing_stats in report_sections:
         report_md = build_report(
-            tracked_paper, analyses_rows, failed_pdfs, scholarly_synthesis
+            tracked_paper, analyses_rows, failed_pdfs, scholarly_synthesis, citing_stats
         )
         console.print("\n[bold]Report:[/bold]\n")
         _print_markdown(report_md)
@@ -427,6 +428,7 @@ def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) ->
     db_path = _get_db(cfg)
 
     from citation_tracker.parser import extract_text
+    from citation_tracker.resolver import resolve_from_stored_text
 
     with get_conn(db_path) as conn:
         tracked = get_tracked_paper_by_id(conn, paper_id)
@@ -434,9 +436,12 @@ def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) ->
             console.print(f"[red]Tracked paper with ID {paper_id} not found.[/red]")
             sys.exit(1)
 
+    needs_metadata_resolution = False
+    title_guess = Path(pdf_path).stem.replace("_", " ").replace("-", " ")
+
     citing_paper = resolve_paper(url=None, doi=doi, ss_id=None, cfg=cfg)
     if citing_paper is None:
-        title_guess = Path(pdf_path).stem.replace("_", " ").replace("-", " ")
+        needs_metadata_resolution = True
         citing_paper = {
             "doi": doi,
             "title": title_guess,
@@ -450,17 +455,26 @@ def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) ->
 
     with get_conn(db_path) as conn:
         cid, _is_new = upsert_citing_paper(conn, paper_id, citing_paper)
-
         safe_doi = _doi_to_path(citing_paper.get("doi") or f"manual-{cid}")
         dest_dir = cfg.pdfs_dir / safe_doi
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / "paper.pdf"
         shutil.copy2(pdf_path, dest)
 
-        text = extract_text(dest)
+    text = extract_text(dest)
+
+    with get_conn(db_path) as conn:
         update_citing_paper_pdf(conn, cid, "manual")
         if text:
             update_citing_paper_text(conn, cid, text)
+
+    if needs_metadata_resolution and text:
+        console.print("  Resolving metadata from PDF content...")
+        resolved = resolve_from_stored_text(text, title_guess, str(dest), cfg)
+        if resolved and (resolved.get("title") or resolved.get("doi")):
+            with get_conn(db_path) as conn:
+                update_citing_paper_metadata(conn, cid, resolved)
+            citing_paper.update({k: v for k, v in resolved.items() if v is not None})
 
     console.print(
         f"[green]Ingested citation for paper ID {paper_id}: "
@@ -468,6 +482,66 @@ def ingest(ctx: click.Context, pdf_path: str, paper_id: str, doi: str | None) ->
     )
     if not text:
         console.print("[yellow]Warning: could not extract text from PDF.[/yellow]")
+
+
+# ── reprocess ──────────────────────────────────────────────────────────────
+
+
+@main.command("reprocess")
+@click.option(
+    "--id", "paper_id", required=True,
+    help="8-char hex ID of the tracked paper whose manually ingested citations should be reprocessed",
+)
+@click.pass_context
+def reprocess_metadata(ctx: click.Context, paper_id: str) -> None:
+    """Re-resolve metadata for manually ingested citing papers.
+
+    Finds all manually ingested citing papers for the given tracked paper that
+    have extracted text, and re-runs metadata resolution (API search + LLM
+    extraction) to populate missing title, authors, year, and DOI fields.
+
+    \b
+    Example:
+      citation-tracker reprocess --id a1b2c3d4
+    """
+    cfg = ctx.obj["cfg"]
+    db_path = _get_db(cfg)
+
+    from citation_tracker.resolver import resolve_from_stored_text
+
+    with get_conn(db_path) as conn:
+        tracked = get_tracked_paper_by_id(conn, paper_id)
+        if tracked is None:
+            console.print(f"[red]Paper with ID {paper_id} not found.[/red]")
+            sys.exit(1)
+
+        to_reprocess = conn.execute(
+            """SELECT * FROM citing_papers
+               WHERE tracked_paper_id=? AND pdf_status='manual' AND text_extracted=1""",
+            (paper_id,),
+        ).fetchall()
+
+    if not to_reprocess:
+        console.print("No manually ingested papers with extracted text found.")
+        return
+
+    updated = 0
+    for cp_row in to_reprocess:
+        cp = dict(cp_row)
+        hint = cp.get("title") or "unknown"
+        console.print(f"  Resolving: [dim]{hint}[/dim]")
+        resolved = resolve_from_stored_text(
+            cp["extracted_text"], hint, cp.get("pdf_url") or "", cfg
+        )
+        if resolved and (resolved.get("title") or resolved.get("doi")):
+            with get_conn(db_path) as conn:
+                update_citing_paper_metadata(conn, cp["id"], resolved)
+            console.print(f"    → {resolved.get('title', 'N/A')} ({resolved.get('year', 'N/A')})")
+            updated += 1
+        else:
+            console.print(f"    [yellow]Could not resolve metadata[/yellow]")
+
+    console.print(f"\n[bold green]Updated {updated}/{len(to_reprocess)} papers.[/bold green]")
 
 
 # ── citations ──────────────────────────────────────────────────────────────
@@ -585,6 +659,25 @@ def show(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
             " WHERE tracked_paper_id=? AND pdf_status='failed'",
             (paper["id"],),
         ).fetchall()
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN pdf_status='pending'    THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN pdf_status='downloaded' THEN 1 ELSE 0 END) AS downloaded,
+                SUM(CASE WHEN pdf_status='failed'     THEN 1 ELSE 0 END) AS failed,
+                SUM(CASE WHEN pdf_status='manual'     THEN 1 ELSE 0 END) AS manual
+            FROM citing_papers WHERE tracked_paper_id=?
+            """,
+            (paper["id"],),
+        ).fetchone()
+        citing_stats = {
+            "total":      row["total"]      or 0,
+            "pending":    row["pending"]    or 0,
+            "downloaded": row["downloaded"] or 0,
+            "failed":     row["failed"]     or 0,
+            "manual":     row["manual"]     or 0,
+        }
 
     scholarly_synthesis = None
     if analyses:
@@ -596,5 +689,5 @@ def show(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
         except Exception as exc:
             console.print(f"[yellow]Warning: synthesis failed: {exc}[/yellow]")
 
-    report = build_report(paper, analyses, failed_pdfs, scholarly_synthesis)
+    report = build_report(paper, analyses, failed_pdfs, scholarly_synthesis, citing_stats)
     _print_markdown(report)

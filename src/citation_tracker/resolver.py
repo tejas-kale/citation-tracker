@@ -7,6 +7,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ def _resolve_from_pdf(url: str, cfg: Any) -> dict[str, Any] | None:
     from citation_tracker.fetcher import download_pdf
     from citation_tracker.parser import extract_text
 
-    filename = Path(url).name
+    filename = Path(urlparse(url).path).name
     title_guess = filename
     for ext in [".pdf", ".html", ".htm"]:
         if title_guess.lower().endswith(ext):
@@ -208,7 +209,7 @@ def _resolve_by_url(url: str, cfg: Any) -> dict[str, Any] | None:
         return paper
 
     # Stub entry — we at least know the URL
-    filename = Path(url).name
+    filename = Path(urlparse(url).path).name
     title_guess = filename
     for ext in [".pdf", ".html", ".htm"]:
         if title_guess.lower().endswith(ext):
@@ -226,6 +227,46 @@ def _resolve_by_url(url: str, cfg: Any) -> dict[str, Any] | None:
         "oa_id": None,
         "pdf_url": url,
     }
+
+
+def resolve_from_stored_text(
+    text: str, hint: str, url: str, cfg: Any
+) -> dict[str, Any] | None:
+    """Resolve paper metadata from already-extracted PDF text.
+
+    Tries API search first (Semantic Scholar, OpenAlex, ADS), then falls back
+    to LLM extraction. Used when a PDF was ingested without a DOI.
+
+    Args:
+        text: Full extracted text of the PDF.
+        hint: Fallback title hint (e.g. filename stem).
+        url: Source URL or local path to store as source_url/pdf_url.
+        cfg: Application config.
+
+    Returns:
+        A paper metadata dict or None if resolution fails.
+    """
+    from citation_tracker.sources import semantic_scholar as ss
+    from citation_tracker.sources import openalexapi as oa
+    from citation_tracker.sources import adsapi as ads
+
+    query = _clean_query(text, max_len=200)
+
+    paper = (
+        ss.search_paper_by_query(query)
+        or oa.search_paper_by_query(query)
+        or ads.search_paper_by_query(query, cfg.ads.api_key)
+    )
+    if paper:
+        if paper.get("doi"):
+            official = _resolve_by_doi(paper["doi"], cfg)
+            if official:
+                official["source_url"] = url
+                return official
+        paper["source_url"] = url
+        return paper
+
+    return _resolve_from_pdf_text(text, hint, url, cfg)
 
 
 def resolve_paper(
