@@ -1,7 +1,7 @@
-import os
-import yaml
 from pathlib import Path
-from citation_tracker.config import load_config, Config
+from unittest.mock import MagicMock, patch
+from citation_tracker.config import load_config, Config, OpenRouterConfig
+
 
 def test_config_defaults():
     config = Config()
@@ -9,30 +9,40 @@ def test_config_defaults():
     assert config.data_dir == Path.home() / ".citation-tracker"
     assert config.db_path == Path.home() / ".citation-tracker" / "tracker.db"
 
-def test_load_config_yaml(tmp_path):
-    yaml_file = tmp_path / "config.yaml"
-    raw = {
-        "backend": "claude_code",
-        "data_dir": "~/custom-dir",
-        "openrouter": {
-            "model": "gpt-4",
-            "api_key_env": "CUSTOM_KEY"
-        }
-    }
-    with yaml_file.open("w") as f:
-        yaml.dump(raw, f)
-    
-    config = load_config(config_path=yaml_file)
-    assert config.backend == "claude_code"
-    assert config.data_dir == Path.home() / "custom-dir"
-    assert config.openrouter.model == "gpt-4"
-    assert config.openrouter.api_key_env == "CUSTOM_KEY"
 
-def test_load_config_env(tmp_path, monkeypatch):
-    env_file = tmp_path / ".env"
-    with env_file.open("w") as f:
-        f.write("OPENROUTER_API_KEY=test-key\n")
-    
-    config = load_config(env_path=env_file)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+def test_load_config():
+    mock_cfg = MagicMock()
+    mock_cfg.citation_tracker.model = "gpt-4"
+    mock_cfg.citation_tracker.data_dir = Path.home() / "custom-dir"
+    mock_cfg.citation_tracker.unpaywall_email = ""
+    mock_cfg.openrouter.model = "default-model"
+    mock_cfg.openrouter.api_key = "test-key"
+
+    with patch("citation_tracker.config._load_tejas_config", return_value=mock_cfg), \
+         patch("citation_tracker.config.get_secret", return_value=None):
+        config = load_config()
+
+    assert config.openrouter.model == "gpt-4"
     assert config.openrouter.api_key == "test-key"
+    assert config.data_dir == Path.home() / "custom-dir"
+
+
+def test_load_config_falls_back_to_openrouter_model():
+    mock_cfg = MagicMock()
+    mock_cfg.citation_tracker.model = None
+    mock_cfg.citation_tracker.data_dir = Path.home() / ".citation-tracker"
+    mock_cfg.citation_tracker.unpaywall_email = ""
+    mock_cfg.openrouter.model = "fallback-model"
+    mock_cfg.openrouter.api_key = ""
+
+    with patch("citation_tracker.config._load_tejas_config", return_value=mock_cfg), \
+         patch("citation_tracker.config.get_secret", return_value=None):
+        config = load_config()
+
+    assert config.openrouter.model == "fallback-model"
+
+
+def test_openrouter_config_api_key_env_fallback(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-test-key")
+    orc = OpenRouterConfig()
+    assert orc.api_key == "env-test-key"
