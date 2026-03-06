@@ -9,8 +9,7 @@ dependencies = [
     "pymupdf-layout",
     "openai",
     "click",
-    "pyyaml",
-    "python-dotenv",
+    "tejas-config",
     "tenacity",
     "rich",
     "markdown",
@@ -25,6 +24,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/citation_tracker"]
+
+[tool.uv.sources]
+tejas-config = { path = "../tejas-config", editable = true }
 
 [dependency-groups]
 dev = [
