@@ -12,11 +12,35 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 
+_STOP_WORDS = {"a", "an", "the", "of", "in", "and", "or", "for", "to", "on", "is", "are"}
+
+
 def _clean_query(text: str, max_len: int = 200) -> str:
     """Clean extracted text for use as a search query."""
     text = re.sub(r"[#*_\[\]()]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:max_len]
+
+
+def _titles_match(query_title: str, result_title: str | None, threshold: float = 0.4) -> bool:
+    """Return True if result_title shares enough words with query_title.
+
+    Uses word-overlap Jaccard similarity after stripping punctuation and stop words.
+    A threshold of 0.4 means at least 40% of the smaller title's words overlap.
+    """
+    if not result_title:
+        return False
+
+    def _words(text: str) -> set[str]:
+        text = re.sub(r"[^\w\s]", " ", text.lower())
+        return {w for w in text.split() if w not in _STOP_WORDS and len(w) > 1}
+
+    q_words = _words(query_title)
+    r_words = _words(result_title)
+    if not q_words or not r_words:
+        return False
+    overlap = len(q_words & r_words) / min(len(q_words), len(r_words))
+    return overlap >= threshold
 
 
 def _title_from_pdf_markdown(text: str) -> str | None:
@@ -140,6 +164,7 @@ def _resolve_from_pdf(url: str, cfg: Any) -> dict[str, Any] | None:
 
     # For short/ambiguous filenames or hash-like names (no spaces), peek at PDF content for a better query
     pdf_text: str | None = None
+    title: str | None = None
     if len(title_guess) < 30 or " " not in title_guess:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = download_pdf(url, Path(tmpdir), filename_hint="resolve")
@@ -155,6 +180,15 @@ def _resolve_from_pdf(url: str, cfg: Any) -> dict[str, Any] | None:
         or ads.search_paper_by_query(query, cfg.ads.api_key)
     )
 
+    # Reject the result if its title doesn't match the query title (guards against wrong-paper matches)
+    if paper and title and not _titles_match(title, paper.get("title")):
+        logger.warning(
+            "Search result title mismatch: queried %r, got %r — falling back to LLM",
+            title,
+            paper.get("title"),
+        )
+        paper = None
+
     if paper:
         if paper.get("doi"):
             official = _resolve_by_doi(paper["doi"], cfg)
@@ -165,7 +199,7 @@ def _resolve_from_pdf(url: str, cfg: Any) -> dict[str, Any] | None:
         return paper
 
     if pdf_text:
-        return _resolve_from_pdf_text(pdf_text, title_guess, url, cfg)
+        return _resolve_from_pdf_text(pdf_text, title or title_guess, url, cfg)
 
     return None
 
@@ -271,13 +305,23 @@ def resolve_from_stored_text(
     from citation_tracker.sources import openalexapi as oa
     from citation_tracker.sources import adsapi as ads
 
-    query = _clean_query(text, max_len=200)
+    extracted_title = _title_from_pdf_markdown(text)
+    query = _clean_query(extracted_title) if extracted_title else _clean_query(text, max_len=200)
 
     paper = (
         ss.search_paper_by_query(query)
         or oa.search_paper_by_query(query)
         or ads.search_paper_by_query(query, cfg.ads.api_key)
     )
+
+    if paper and extracted_title and not _titles_match(extracted_title, paper.get("title")):
+        logger.warning(
+            "Search result title mismatch: queried %r, got %r — falling back to LLM",
+            extracted_title,
+            paper.get("title"),
+        )
+        paper = None
+
     if paper:
         if paper.get("doi"):
             official = _resolve_by_doi(paper["doi"], cfg)
