@@ -81,7 +81,10 @@ def get_paper_by_doi(doi: str) -> dict[str, Any] | None:
 def get_paper_by_arxiv(arxiv_id: str) -> dict[str, Any] | None:
     """Fetch paper metadata from OpenAlex by arXiv ID."""
     try:
-        data = _get(f"{OA_BASE}/works", {"filter": f"ids.arxiv:{arxiv_id}"})
+        data = _get(
+            f"{OA_BASE}/works",
+            {"filter": f"ids.arxiv:https://arxiv.org/abs/{arxiv_id}"},
+        )
         results = data.get("results") or []
         if not results:
             return None

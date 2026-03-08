@@ -19,6 +19,26 @@ def _clean_query(text: str, max_len: int = 200) -> str:
     return text[:max_len]
 
 
+def _title_from_pdf_markdown(text: str) -> str | None:
+    """Extract paper title from markdown-formatted PDF text.
+
+    Looks for the first markdown heading that looks like a title (not a section
+    number like "1 Introduction"). Returns None if no suitable heading is found.
+    """
+    for line in text.splitlines()[:80]:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            candidate = re.sub(r"^#+\s*", "", line).strip()
+            # Skip section headings like "1 Introduction", "2.1 Methods"
+            if re.match(r"^\d", candidate):
+                continue
+            if len(candidate) > 10:
+                return candidate
+    return None
+
+
 def _merge_source_results(
     doi: str,
     ss_result: dict[str, Any] | None,
@@ -118,15 +138,16 @@ def _resolve_from_pdf(url: str, cfg: Any) -> dict[str, Any] | None:
     title_guess = title_guess.replace("_", " ").replace("-", " ")
     query = _clean_query(title_guess)
 
-    # For short/ambiguous filenames, peek at PDF content for a better query
+    # For short/ambiguous filenames or hash-like names (no spaces), peek at PDF content for a better query
     pdf_text: str | None = None
-    if len(title_guess) < 30:
+    if len(title_guess) < 30 or " " not in title_guess:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = download_pdf(url, Path(tmpdir), filename_hint="resolve")
             if tmp_path:
                 pdf_text = extract_text(tmp_path)
                 if pdf_text:
-                    query = _clean_query(pdf_text, max_len=200)
+                    title = _title_from_pdf_markdown(pdf_text)
+                    query = _clean_query(title) if title else _clean_query(pdf_text, max_len=200)
 
     paper = (
         ss.search_paper_by_query(query)
