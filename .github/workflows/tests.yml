@@ -13,6 +13,13 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Check out tejas-config
+      uses: actions/checkout@v4
+      with:
+        repository: tejas-kale/tejas-config
+        token: ${{ secrets.GH_PAT }}
+        path: ../tejas-config
+
     - name: Install uv
       uses: astral-sh/setup-uv@v5
       with:
