@@ -7,7 +7,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ def _resolve_from_pdf(url: str, cfg: Any) -> dict[str, Any] | None:
     from citation_tracker.fetcher import download_pdf
     from citation_tracker.parser import extract_text
 
-    filename = Path(urlparse(url).path).name
+    filename = unquote(Path(urlparse(url).path).name)
     title_guess = filename
     for ext in [".pdf", ".html", ".htm"]:
         if title_guess.lower().endswith(ext):
@@ -180,8 +180,10 @@ def _resolve_from_pdf(url: str, cfg: Any) -> dict[str, Any] | None:
         or ads.search_paper_by_query(query, cfg.ads.api_key)
     )
 
-    # Reject the result if its title doesn't match the query title (guards against wrong-paper matches)
-    if paper and title and not _titles_match(title, paper.get("title")):
+    # Reject the result if its title doesn't match the filename or PDF title
+    # (guards against wrong-paper matches when the API returns unrelated results)
+    compare_title = title or title_guess
+    if paper and not _titles_match(compare_title, paper.get("title")):
         logger.warning(
             "Search result title mismatch: queried %r, got %r — falling back to LLM",
             title,
@@ -264,7 +266,7 @@ def _resolve_by_url(url: str, cfg: Any) -> dict[str, Any] | None:
         return paper
 
     # Stub entry — we at least know the URL
-    filename = Path(urlparse(url).path).name
+    filename = unquote(Path(urlparse(url).path).name)
     title_guess = filename
     for ext in [".pdf", ".html", ".htm"]:
         if title_guess.lower().endswith(ext):

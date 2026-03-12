@@ -294,9 +294,10 @@ def _save_reports(report_sections: list[Any], cfg: Any) -> None:
     reports_dir = cfg.reports_dir
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    for tracked_paper, analyses_rows, failed_pdfs, scholarly_synthesis, citing_stats in report_sections:
+    for tracked_paper, analyses_rows, failed_pdfs, scholarly_synthesis, citing_stats, unconfirmed_analyses in report_sections:
         report_md = build_report(
-            tracked_paper, analyses_rows, failed_pdfs, scholarly_synthesis, citing_stats
+            tracked_paper, analyses_rows, failed_pdfs, scholarly_synthesis, citing_stats,
+            unconfirmed_analyses=unconfirmed_analyses,
         )
         console.print("\n[bold]Report:[/bold]\n")
         _print_markdown(report_md)
@@ -679,15 +680,21 @@ def show(ctx: click.Context, paper_id: str | None, doi: str | None) -> None:
             "manual":     row["manual"]     or 0,
         }
 
+    confirmed_analyses = [a for a in analyses if a["confirmed_citation"] != 0]
+    unconfirmed_analyses = [a for a in analyses if a["confirmed_citation"] == 0]
+
     scholarly_synthesis = None
-    if analyses:
+    if confirmed_analyses:
         try:
             console.print("  Generating scholarly synthesis...")
             scholarly_synthesis = generate_scholarly_synthesis(
-                dict(paper), [dict(a) for a in analyses], cfg
+                dict(paper), [dict(a) for a in confirmed_analyses], cfg
             )
         except Exception as exc:
             console.print(f"[yellow]Warning: synthesis failed: {exc}[/yellow]")
 
-    report = build_report(paper, analyses, failed_pdfs, scholarly_synthesis, citing_stats)
+    report = build_report(
+        paper, confirmed_analyses, failed_pdfs, scholarly_synthesis, citing_stats,
+        unconfirmed_analyses=unconfirmed_analyses,
+    )
     _print_markdown(report)

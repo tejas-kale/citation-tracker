@@ -28,6 +28,7 @@ Analyse how this citing paper engages with the original paper above.
 Return a JSON object with exactly these fields:
 
 {{
+  "confirmed_citation": true if you can find a reference to the original paper in the citing paper's reference list or in-text citations, false if you cannot,
   "summary": "2–3 sentence overview of the citing paper's argument",
   "relationship_type": "one of: supports | challenges | extends | uses | neutral",
   "new_evidence": "any new empirical or theoretical evidence introduced, or null",

@@ -17,6 +17,7 @@ def build_report(
     failed_pdfs: list[sqlite3.Row],
     scholarly_synthesis: str | None = None,
     citing_stats: dict[str, int] | None = None,
+    unconfirmed_analyses: list[sqlite3.Row] | None = None,
 ) -> str:
     """
     Build a Markdown report for a single tracked paper.
@@ -111,6 +112,19 @@ def build_report(
         for fp in failed_pdfs:
             doi_str = f" (DOI: {fp['doi']})" if fp["doi"] else ""
             lines.append(f"- {fp['title'] or 'Untitled'}{doi_str}")
+        lines.append("")
+
+    if unconfirmed_analyses:
+        lines.append("## Spurious Citation Matches\n")
+        lines.append(
+            "The following papers were returned by citation databases but do not "
+            "appear to actually cite this work. They are excluded from the analysis above.\n"
+        )
+        for a in unconfirmed_analyses:
+            title_str = a["citing_title"] or "Untitled"
+            year_str = a["citing_year"] or "N/A"
+            doi_str = f" (DOI: {a['citing_doi']})" if a["citing_doi"] else ""
+            lines.append(f"- {title_str} ({year_str}){doi_str}")
         lines.append("")
 
     return "\n".join(lines)

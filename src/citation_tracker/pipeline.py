@@ -11,7 +11,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Type alias for a report section tuple
-ReportSection = tuple[dict[str, Any], list[Any], list[Any], str | None, dict[str, int]]
+ReportSection = tuple[dict[str, Any], list[Any], list[Any], str | None, dict[str, int], list[Any]]
 
 
 def _try_resolve_paper_ids(
@@ -203,6 +203,7 @@ def _analyse_stage(
                             "citing_paper_id": cp_id,
                             "tracked_paper_id": tracked_id,
                             "backend_used": cfg.backend,
+                            "confirmed_citation": result.get("confirmed_citation"),
                             "summary": result.get("summary"),
                             "relationship_type": result.get("relationship_type"),
                             "new_evidence": result.get("new_evidence"),
@@ -263,18 +264,21 @@ def _report_stage(
             "manual":     row["manual"]     or 0,
         }
 
+    confirmed_analyses = [a for a in analyses_rows if a["confirmed_citation"] != 0]
+    unconfirmed_analyses = [a for a in analyses_rows if a["confirmed_citation"] == 0]
+
     scholarly_synthesis = None
-    if analyses_rows:
+    if confirmed_analyses:
         try:
             logger.info("Generating scholarly synthesis...")
             scholarly_synthesis = generate_scholarly_synthesis(
-                paper, [dict(a) for a in analyses_rows], cfg
+                paper, [dict(a) for a in confirmed_analyses], cfg
             )
         except Exception as exc:
             errors.append(f"Synthesis failed: {exc}")
             logger.warning("Synthesis failed: %s", exc)
 
-    return paper, analyses_rows, failed_pdfs, scholarly_synthesis, citing_stats
+    return paper, confirmed_analyses, failed_pdfs, scholarly_synthesis, citing_stats, unconfirmed_analyses
 
 
 def process_paper(

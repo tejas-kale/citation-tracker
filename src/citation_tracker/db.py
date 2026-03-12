@@ -90,6 +90,7 @@ def init_db(db_path: Path) -> None:
                 citing_paper_id         TEXT NOT NULL REFERENCES citing_papers(id),
                 tracked_paper_id        TEXT NOT NULL REFERENCES tracked_papers(id),
                 backend_used            TEXT,
+                confirmed_citation      INTEGER,
                 summary                 TEXT,
                 relationship_type       TEXT,
                 new_evidence            TEXT,
@@ -112,6 +113,12 @@ def init_db(db_path: Path) -> None:
             );
             """
         )
+
+        # Migration: Add confirmed_citation column to analyses if it doesn't exist
+        cursor = conn.execute("PRAGMA table_info(analyses)")
+        if "confirmed_citation" not in [r[1] for r in cursor.fetchall()]:
+            logger.info("Migrating database: adding confirmed_citation to analyses")
+            conn.execute("ALTER TABLE analyses ADD COLUMN confirmed_citation INTEGER")
 
 
 @contextmanager
@@ -347,16 +354,17 @@ def list_citing_papers(
 
 def insert_analysis(conn: sqlite3.Connection, analysis: dict[str, Any]) -> str:
     analysis_id = _generate_id()
+    confirmed = analysis.get("confirmed_citation")
     conn.execute(
         """
         INSERT INTO analyses
             (id, citing_paper_id, tracked_paper_id, backend_used,
-             summary, relationship_type, new_evidence,
+             confirmed_citation, summary, relationship_type, new_evidence,
              flaws_identified, assumptions_questioned, other_notes,
              raw_response, analysed_at)
         VALUES
             (:id, :citing_paper_id, :tracked_paper_id, :backend_used,
-             :summary, :relationship_type, :new_evidence,
+             :confirmed_citation, :summary, :relationship_type, :new_evidence,
              :flaws_identified, :assumptions_questioned, :other_notes,
              :raw_response, :analysed_at)
         """,
@@ -365,6 +373,7 @@ def insert_analysis(conn: sqlite3.Connection, analysis: dict[str, Any]) -> str:
             "citing_paper_id": analysis["citing_paper_id"],
             "tracked_paper_id": analysis["tracked_paper_id"],
             "backend_used": analysis.get("backend_used"),
+            "confirmed_citation": None if confirmed is None else (1 if confirmed else 0),
             "summary": analysis.get("summary"),
             "relationship_type": analysis.get("relationship_type"),
             "new_evidence": analysis.get("new_evidence"),
